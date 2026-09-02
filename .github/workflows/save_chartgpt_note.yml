@@ -17,13 +17,20 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install requests python-docx
-
-      - name: Save note to OneDrive
-        env:
-          AZURE_TENANT_ID:     ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID:     ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          ONEDRIVE_USER_EMAIL: ${{ secrets.ONEDRIVE_USER_EMAIL }}
         run: |
-          echo '${{ toJson(github.event.client_payload) }}' | python upload_to_onedrive.py
+          pip install python-docx
+          sudo apt-get install -y rclone
+
+      - name: Create Word document
+        run: |
+          echo '${{ toJson(github.event.client_payload) }}' | python create_docx.py
+
+      - name: Upload to OneDrive
+        env:
+          RCLONE_CONF: ${{ secrets.RCLONE_CONF }}
+        run: |
+          echo "$RCLONE_CONF" | base64 -d > /tmp/rclone.conf
+          TARGET_DIR=$(cat /tmp/onedrive_dir.txt)
+          FILENAME=$(cat /tmp/docx_filename.txt)
+          rclone --config /tmp/rclone.conf copy "/tmp/$FILENAME" "onedrive915:$TARGET_DIR/"
+          echo "Saved to OneDrive: $TARGET_DIR/$FILENAME"
