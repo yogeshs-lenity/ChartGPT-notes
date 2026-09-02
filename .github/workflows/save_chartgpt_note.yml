@@ -1,0 +1,29 @@
+name: Save ChartGPT Note to OneDrive
+
+on:
+  repository_dispatch:
+    types: [save_chartgpt_note]
+
+jobs:
+  save-note:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests python-docx
+
+      - name: Save note to OneDrive
+        env:
+          AZURE_TENANT_ID:     ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID:     ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          ONEDRIVE_USER_EMAIL: ${{ secrets.ONEDRIVE_USER_EMAIL }}
+        run: |
+          echo '${{ toJson(github.event.client_payload) }}' | python upload_to_onedrive.py
