@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      width: 320px;
+      background: #0f172a;
+      color: #e2e8f0;
+    }
+    .header {
+      background: #1e3a5f;
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .header h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.3px; }
+    .header .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #22c55e;
+    }
+    .body { padding: 20px; }
+    label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: #94a3b8;
+      display: block;
+      margin-bottom: 6px;
+    }
+    input {
+      width: 100%;
+      padding: 9px 12px;
+      border-radius: 6px;
+      border: 1px solid #334155;
+      background: #1e293b;
+      color: #e2e8f0;
+      font-size: 13px;
+      font-family: "SF Mono", monospace;
+    }
+    input:focus { outline: none; border-color: #3b82f6; }
+    .hint {
+      font-size: 11px;
+      color: #64748b;
+      margin-top: 6px;
+      line-height: 1.5;
+    }
+    button {
+      margin-top: 16px;
+      width: 100%;
+      padding: 10px;
+      border-radius: 6px;
+      border: none;
+      background: #3b82f6;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover { background: #2563eb; }
+    .status {
+      margin-top: 12px;
+      font-size: 12px;
+      text-align: center;
+      color: #22c55e;
+      min-height: 16px;
+    }
+    .divider {
+      border: none;
+      border-top: 1px solid #1e293b;
+      margin: 16px 0;
+    }
+    .info {
+      font-size: 11px;
+      color: #64748b;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="dot" id="statusDot"></div>
+    <h1>ChartGPT Notes</h1>
+  </div>
+  <div class="body">
+    <label>GitHub Personal Access Token</label>
+    <input type="password" id="patInput" placeholder="ghp_..." autocomplete="off">
+    <div class="hint">
+      Needs <code>repo</code> scope.
+      <a href="https://github.com/settings/tokens/new" target="_blank" style="color:#3b82f6">Generate one →</a>
+    </div>
+    <button id="saveBtn">Save</button>
+    <div class="status" id="statusMsg"></div>
+    <hr class="divider">
+    <div class="info">
+      Notes save automatically when ChartGPT prints<br>
+      <strong>FINAL-OK TO PRINT</strong> or a <strong>SLIM Billing Block</strong>.<br>
+      Files appear in OneDrive under<br>
+      <em>ChartGPT Notes / Year / Month / Date /</em>
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
