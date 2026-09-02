@@ -1,121 +1,152 @@
 // ChartGPT Notes — content script
-// Runs on chatgpt.com, watches for FINAL-OK TO PRINT and SLIM Billing Blocks
+// Based on OpenChatPDF (MIT) DOM capture approach
+// Auto-detects FINAL-OK TO PRINT and SLIM Billing Blocks, saves silently
 
-const FINAL_MARKERS = ["FINAL-OK TO PRINT"];
-const SLIM_MARKER   = "SLIM Billing Block";
+const RETRY_INTERVAL_MS = 1200;
+const MAX_INIT_ATTEMPTS  = 25;
 
-// Workflows that end with SLIM (Cerner) vs FINAL-OK TO PRINT (ECW/others)
-const CERNER_WORKFLOWS = [
-  "Cerner Rounds", "Cerner Consult", "Cerner Procedure",
-  "Cardiac Cath", "Tilt Table", "CCM", "Wellness"
+// Stable selectors (same as OpenChatPDF — tested across ChatGPT UI versions)
+const MSG_SELECTORS = [
+  'div[data-message-author-role]',
+  'article[data-testid^="conversation-turn-"]',
 ];
 
-let lastSavedMessageId = null;
+let lastSavedKey  = null;
+let observerAttached = false;
 
-// ── Extract all conversation messages from the DOM ──────────────────────────
-function getMessages() {
-  const msgs = [];
-  const elements = document.querySelectorAll('[data-message-author-role]');
-  elements.forEach((el, idx) => {
-    const role = el.getAttribute('data-message-author-role');
-    const text = el.innerText.trim();
-    if (text) msgs.push({ role, text, idx });
-  });
-  return msgs;
+// ── Wait for ChatGPT UI to load ───────────────────────────────────────────────
+function waitForUI(attempt = 0) {
+  if (attempt >= MAX_INIT_ATTEMPTS) return;
+
+  const found = MSG_SELECTORS.some(sel => document.querySelector(sel));
+  if (found) {
+    attachObserver();
+  } else {
+    setTimeout(() => waitForUI(attempt + 1), RETRY_INTERVAL_MS);
+  }
 }
 
-// ── Detect if an assistant message is a completed note ───────────────────────
-function isCompletedNote(text) {
-  return (
-    FINAL_MARKERS.some(m => text.includes(m)) ||
-    (text.includes(SLIM_MARKER) && text.includes("CPT:") && text.includes("Date of Service:"))
-  );
-}
+// ── MutationObserver: watch for new assistant messages ────────────────────────
+function attachObserver() {
+  if (observerAttached) return;
+  observerAttached = true;
 
-// ── Parse workflow type from note title line ──────────────────────────────────
-function parseWorkflow(text) {
-  // Look for "# INITIALS - Workflow Name" pattern
-  const titleMatch = text.match(/^#\s+([A-Z]{2,3}\s[A-Z]{2,3})\s+-\s+(.+?)(?:\s*Output)?$/m);
-  if (titleMatch) return { initials: titleMatch[1], workflow: titleMatch[2].trim() };
+  const observer = new MutationObserver(debounce(checkForCompletedNote, 800));
+  observer.observe(document.body, { childList: true, subtree: true });
 
-  // Cerner: "# INITIALS - Inpatient Cardiology Progress Note"
-  const cernerMatch = text.match(/^#\s+([A-Z]{2,3}\s[A-Z]{2,3})\s+-\s+(Inpatient|Cardiac|Tilt|Pre-Procedure|CCM|Wellness).+$/m);
-  if (cernerMatch) return { initials: cernerMatch[1], workflow: cernerMatch[2].trim() };
-
-  // Fallback: look for SLIM Patient Initials
-  const slimMatch = text.match(/Patient Initials:\s*([A-Z]{2,3}\s[A-Z]{2,3})/);
-  if (slimMatch) return { initials: slimMatch[1], workflow: "Clinical Note" };
-
-  return { initials: "UNKNOWN", workflow: "Clinical Note" };
-}
-
-// ── Parse date of service ─────────────────────────────────────────────────────
-function parseDate(text) {
-  // SLIM Date of Service
-  const slimDate = text.match(/Date of Service:\s*(\d{2}\/\d{2}\/\d{4})/);
-  if (slimDate) return slimDate[1];
-
-  // ECW session header date
-  const headerDate = text.match(/(?:ECW clinic|CERNHOSP|Cerner|EPIC)\s*-\s*(\d{2}\/\d{2}\/\d{4})/i);
-  if (headerDate) return headerDate[1];
-
-  // Today's date as fallback
-  const today = new Date();
-  return `${String(today.getMonth()+1).padStart(2,'0')}/${String(today.getDate()).padStart(2,'0')}/${today.getFullYear()}`;
-}
-
-// ── Collect dictation messages before the completed note ─────────────────────
-function getDictation(messages, noteIdx) {
-  const userMsgs = messages
-    .slice(0, noteIdx)
-    .filter(m => m.role === 'user')
-    .map(m => m.text);
-
-  // Only keep messages from current session (after last session header)
-  let sessionStart = 0;
-  userMsgs.forEach((txt, i) => {
-    if (/^(ECW clinic|CERNHOSP|EPIC dictation|Rhythm monitoring|Dr H|CCM Call|Wellness Visit)\s*-/i.test(txt)) {
-      sessionStart = i;
+  // Re-init on SPA navigation (ChatGPT navigates without full page reload)
+  let lastPath = location.pathname;
+  setInterval(() => {
+    if (location.pathname !== lastPath) {
+      lastPath = location.pathname;
+      lastSavedKey = null;
     }
-  });
-
-  return userMsgs.slice(sessionStart).join('\n---\n');
+  }, 1000);
 }
 
-// ── Main observer ─────────────────────────────────────────────────────────────
-const observer = new MutationObserver(() => {
+// ── Get all messages using OpenChatPDF selectors ──────────────────────────────
+function getMessages() {
+  for (const sel of MSG_SELECTORS) {
+    const els = document.querySelectorAll(sel);
+    if (els.length > 0) {
+      return Array.from(els).map(el => {
+        const explicit = el.getAttribute('data-message-author-role');
+        const role = explicit || ((el.getAttribute('data-testid') || '').includes('user') ? 'user' : 'assistant');
+        // Clone and clean — remove buttons, SVGs, hidden controls (OpenChatPDF approach)
+        const clone = el.cloneNode(true);
+        clone.querySelectorAll('button, svg, [aria-hidden="true"], .sr-only').forEach(n => n.remove());
+        return { role, text: clone.innerText.trim() };
+      }).filter(m => m.text);
+    }
+  }
+  return [];
+}
+
+// ── Check if the latest assistant message is a completed note ─────────────────
+function checkForCompletedNote() {
   const messages = getMessages();
   if (!messages.length) return;
 
-  // Check the last few assistant messages for a completed note
   const assistantMsgs = messages.filter(m => m.role === 'assistant');
   if (!assistantMsgs.length) return;
 
   const last = assistantMsgs[assistantMsgs.length - 1];
+  const text = last.text;
 
-  // Avoid re-saving the same message
-  const msgId = last.idx + '_' + last.text.slice(-30);
-  if (msgId === lastSavedMessageId) return;
-  if (!isCompletedNote(last.text)) return;
+  const isCompleted = text.includes('FINAL-OK TO PRINT') ||
+    (text.includes('SLIM Billing Block') &&
+     text.includes('CPT:') &&
+     text.includes('Date of Service:'));
 
-  lastSavedMessageId = msgId;
+  if (!isCompleted) return;
 
-  const { initials, workflow } = parseWorkflow(last.text);
-  const dos       = parseDate(last.text);
-  const today     = new Date();
-  const sessionDate = `${String(today.getMonth()+1).padStart(2,'0')}/${String(today.getDate()).padStart(2,'0')}/${today.getFullYear()}`;
-  const dictation = getDictation(messages, last.idx);
+  // Deduplicate — don't save the same note twice
+  const key = text.slice(-80);
+  if (key === lastSavedKey) return;
+  lastSavedKey = key;
 
-  const payload = {
+  const payload = buildPayload(messages, text);
+  chrome.runtime.sendMessage({ type: 'SAVE_NOTE', payload });
+}
+
+// ── Build the payload to send to GitHub dispatch ──────────────────────────────
+function buildPayload(messages, noteText) {
+  const today = new Date();
+  const sessionDate = fmt(today);
+
+  // Parse workflow + initials from note title: "# KAR SIN - ECW Clinic Output"
+  const titleMatch = noteText.match(/^#\s+([A-Z]{2,3}\s[A-Z]{2,3})\s+-\s+(.+?)(?:\s*Output)?\s*$/m);
+  const initials   = titleMatch ? titleMatch[1] : extractInitialsFromSlim(noteText);
+  const workflow   = titleMatch ? titleMatch[2].trim() : guessWorkflow(noteText);
+
+  // Date of service from SLIM or session header
+  const dosMatch = noteText.match(/Date of Service:\s*(\d{2}\/\d{2}\/\d{4})/);
+  const dos       = dosMatch ? dosMatch[1] : sessionDate;
+
+  // Dictation = all user messages from this session
+  const userMsgs = messages.filter(m => m.role === 'user');
+  let sessionStart = 0;
+  userMsgs.forEach((m, i) => {
+    if (/^(ECW clinic|CERNHOSP|EPIC dictation|Rhythm monitoring|Dr H|CCM Call|Wellness Visit)\s*-/i.test(m.text)) {
+      sessionStart = i;
+    }
+  });
+  const dictation = userMsgs.slice(sessionStart).map(m => m.text).join('\n---\n');
+
+  return {
     workflow_type:    workflow,
     patient_initials: initials,
     date_of_service:  dos,
-    dictation:        dictation,
-    note_content:     last.text,
+    dictation,
+    note_content:     noteText,
     session_date:     sessionDate,
   };
+}
 
-  chrome.runtime.sendMessage({ type: "SAVE_NOTE", payload });
-});
+function extractInitialsFromSlim(text) {
+  const m = text.match(/Patient Initials:\s*([A-Z]{2,3}\s[A-Z]{2,3})/);
+  return m ? m[1] : 'UNKNOWN';
+}
 
-observer.observe(document.body, { childList: true, subtree: true });
+function guessWorkflow(text) {
+  if (text.includes('FINAL-OK TO PRINT'))       return 'ECW Clinic';
+  if (text.includes('Cardiac Catheterization'))  return 'Cardiac Cath 93458';
+  if (text.includes('Tilt Table'))               return 'Tilt Table Test';
+  if (text.includes('Inpatient Cardiology'))     return 'Cerner Rounds';
+  if (text.includes('Consult Note'))             return 'Cerner Consult';
+  if (text.includes('CCM Telephone'))            return 'CCM Telephone Call';
+  if (text.includes('Wellness Visit'))           return 'Wellness Visit';
+  return 'Clinical Note';
+}
+
+function fmt(d) {
+  return `${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}/${d.getFullYear()}`;
+}
+
+function debounce(fn, ms) {
+  let t;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+
+// ── Start ─────────────────────────────────────────────────────────────────────
+waitForUI();
