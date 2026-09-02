@@ -47,32 +47,37 @@ def safe(text):
 def main():
     data = json.loads(sys.stdin.read())
 
-    workflow = data["workflow_type"]
-    initials = data["patient_initials"]
-    content  = data["note_content"]
-    session  = data["session_date"]
+    # Support both single note and end-of-day batch
+    if "notes" in data:
+        notes = data["notes"]
+    else:
+        notes = [data]
 
-    dt       = datetime.strptime(session, "%m/%d/%Y")
-    year     = dt.strftime("%Y")
-    month    = dt.strftime("%B")
-    date_dir = dt.strftime("%m-%d-%Y")
+    uploads = []
 
-    filename      = f"{safe(workflow)}_{safe(initials)}.docx"
-    onedrive_dir  = f"ChartGPT Notes/{year}/{month}/{date_dir}"
+    for note in notes:
+        workflow     = note["workflow_type"]
+        initials     = note["patient_initials"]
+        content      = note["note_content"]
+        session      = note.get("session_date", data.get("session_date"))
 
-    # Write docx to /tmp
-    docx_path = f"/tmp/{filename}"
-    with open(docx_path, "wb") as f:
-        f.write(markdown_to_docx(content))
+        dt           = datetime.strptime(session, "%m/%d/%Y")
+        year         = dt.strftime("%Y")
+        month        = dt.strftime("%B")
+        date_dir     = dt.strftime("%m-%d-%Y")
 
-    # Write target info for the shell step
-    with open("/tmp/onedrive_dir.txt", "w") as f:
-        f.write(onedrive_dir)
-    with open("/tmp/docx_filename.txt", "w") as f:
-        f.write(filename)
+        filename     = f"{safe(workflow)}_{safe(initials)}.docx"
+        onedrive_dir = f"ChartGPT Notes/{year}/{month}/{date_dir}"
+        docx_path    = f"/tmp/{filename}"
 
-    print(f"Created: {docx_path}")
-    print(f"Target:  onedrive915:{onedrive_dir}/{filename}")
+        with open(docx_path, "wb") as f:
+            f.write(markdown_to_docx(content))
+
+        uploads.append(f"{docx_path}|{onedrive_dir}")
+        print(f"Created: {docx_path} → {onedrive_dir}/{filename}")
+
+    with open("/tmp/uploads.txt", "w") as f:
+        f.write("\n".join(uploads))
 
 
 if __name__ == "__main__":

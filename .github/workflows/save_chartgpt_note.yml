@@ -7,7 +7,7 @@ on:
 jobs:
   save-note:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4
@@ -21,7 +21,7 @@ jobs:
           pip install python-docx
           sudo apt-get install -y rclone
 
-      - name: Create Word document
+      - name: Create Word documents
         run: |
           echo '${{ toJson(github.event.client_payload) }}' | python create_docx.py
 
@@ -30,7 +30,8 @@ jobs:
           RCLONE_CONF: ${{ secrets.RCLONE_CONF }}
         run: |
           echo "$RCLONE_CONF" | base64 -d > /tmp/rclone.conf
-          TARGET_DIR=$(cat /tmp/onedrive_dir.txt)
-          FILENAME=$(cat /tmp/docx_filename.txt)
-          rclone --config /tmp/rclone.conf copy "/tmp/$FILENAME" "onedrive915:$TARGET_DIR/"
-          echo "Saved to OneDrive: $TARGET_DIR/$FILENAME"
+          while IFS='|' read -r local_path onedrive_dir; do
+            filename=$(basename "$local_path")
+            rclone --config /tmp/rclone.conf copy "$local_path" "onedrive915:$onedrive_dir/"
+            echo "Saved: $onedrive_dir/$filename"
+          done < /tmp/uploads.txt
