@@ -16,15 +16,32 @@ def add_inline(para, text):
             para.add_run(part)
 
 
-def markdown_to_docx(md):
+def safe(text):
+    return re.sub(r"[^\w\-]", "_", text).strip("_")
+
+
+def build_docx(workflow, initials, dictation, note_content):
     doc = Document()
-    for line in md.split("\n"):
+
+    # --- Physician Dictation section ---
+    doc.add_heading("Physician Dictation", level=1)
+    for segment in (dictation or "").split("\n---\n"):
+        segment = segment.strip()
+        if segment:
+            doc.add_paragraph(segment)
+        doc.add_paragraph()
+
+    doc.add_paragraph("─" * 60)
+
+    # --- Generated Note section ---
+    doc.add_heading("Generated Note", level=1)
+    for line in note_content.split("\n"):
         if line.startswith("# "):
-            doc.add_heading(line[2:].strip(), level=1)
+            doc.add_heading(line[2:].strip(), level=2)
         elif line.startswith("## "):
-            doc.add_heading(line[3:].strip(), level=2)
+            doc.add_heading(line[3:].strip(), level=3)
         elif line.startswith("### "):
-            doc.add_heading(line[4:].strip(), level=3)
+            doc.add_heading(line[4:].strip(), level=4)
         elif line.startswith("- "):
             add_inline(doc.add_paragraph(style="List Bullet"), line[2:].strip())
         elif re.match(r"^\d+\. ", line):
@@ -34,14 +51,11 @@ def markdown_to_docx(md):
             doc.add_paragraph()
         else:
             add_inline(doc.add_paragraph(), line)
+
     buf = io.BytesIO()
     doc.save(buf)
     buf.seek(0)
     return buf.read()
-
-
-def safe(text):
-    return re.sub(r"[^\w\-]", "_", text).strip("_")
 
 
 def main():
@@ -58,6 +72,7 @@ def main():
     for note in notes:
         workflow     = note["workflow_type"]
         initials     = note["patient_initials"]
+        dictation    = note.get("dictation", "")
         content      = note["note_content"]
         session      = note.get("session_date", data.get("session_date"))
 
@@ -71,7 +86,7 @@ def main():
         docx_path    = f"/tmp/{filename}"
 
         with open(docx_path, "wb") as f:
-            f.write(markdown_to_docx(content))
+            f.write(build_docx(workflow, initials, dictation, content))
 
         uploads.append(f"{docx_path}|{onedrive_dir}")
         print(f"Created: {docx_path} → {onedrive_dir}/{filename}")
