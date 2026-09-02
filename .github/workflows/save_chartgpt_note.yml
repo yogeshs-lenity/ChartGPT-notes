@@ -18,12 +18,12 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install python-docx
-          sudo apt-get install -y rclone
+          sudo apt-get install -y rclone libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz0b libfontconfig1
+          pip install weasyprint
 
-      - name: Create Word documents
+      - name: Create PDFs
         run: |
-          echo '${{ toJson(github.event.client_payload) }}' | python create_docx.py
+          echo '${{ toJson(github.event.client_payload) }}' | python create_pdf.py
 
       - name: Upload to OneDrive
         env:
