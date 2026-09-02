@@ -3,7 +3,7 @@
   "name": "ChartGPT Notes",
   "version": "1.0.0",
   "description": "Silently saves completed ChartGPT clinical notes to OneDrive",
-  "permissions": ["storage", "notifications"],
+  "permissions": ["storage", "notifications", "alarms"],
   "host_permissions": [
     "https://chatgpt.com/*",
     "https://chat.openai.com/*",

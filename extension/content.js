@@ -86,7 +86,7 @@ function checkForCompletedNote() {
   lastSavedKey = key;
 
   const payload = buildPayload(messages, text);
-  chrome.runtime.sendMessage({ type: 'SAVE_NOTE', payload });
+  chrome.runtime.sendMessage({ type: 'QUEUE_NOTE', payload });
 }
 
 // ── Build the payload to send to GitHub dispatch ──────────────────────────────

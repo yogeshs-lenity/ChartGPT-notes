@@ -12,73 +12,55 @@
     }
     .header {
       background: #1e3a5f;
-      padding: 16px 20px;
+      padding: 14px 18px;
       display: flex;
       align-items: center;
       gap: 10px;
     }
-    .header h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.3px; }
-    .header .dot {
-      width: 8px; height: 8px; border-radius: 50%;
-      background: #22c55e;
+    .header h1 { font-size: 14px; font-weight: 600; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; flex-shrink: 0; }
+
+    .queue-bar {
+      background: #0f2a4a;
+      padding: 10px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid #1e293b;
     }
-    .body { padding: 20px; }
+    .queue-label { font-size: 12px; color: #94a3b8; }
+    .queue-count { font-size: 20px; font-weight: 700; color: #38bdf8; line-height: 1; }
+    .queue-sub   { font-size: 10px; color: #64748b; margin-top: 1px; }
+
+    .body { padding: 16px 18px; }
     label {
-      font-size: 11px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.8px;
-      color: #94a3b8;
-      display: block;
-      margin-bottom: 6px;
+      font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.8px; color: #94a3b8; display: block; margin-bottom: 5px;
     }
     input {
-      width: 100%;
-      padding: 9px 12px;
-      border-radius: 6px;
-      border: 1px solid #334155;
-      background: #1e293b;
-      color: #e2e8f0;
-      font-size: 13px;
-      font-family: "SF Mono", monospace;
+      width: 100%; padding: 8px 11px; border-radius: 6px;
+      border: 1px solid #334155; background: #1e293b;
+      color: #e2e8f0; font-size: 13px; font-family: "SF Mono", monospace;
     }
     input:focus { outline: none; border-color: #3b82f6; }
-    .hint {
-      font-size: 11px;
-      color: #64748b;
-      margin-top: 6px;
-      line-height: 1.5;
-    }
+    .hint { font-size: 11px; color: #64748b; margin-top: 5px; line-height: 1.5; }
+
+    .btn-row { display: flex; gap: 8px; margin-top: 14px; }
     button {
-      margin-top: 16px;
-      width: 100%;
-      padding: 10px;
-      border-radius: 6px;
-      border: none;
-      background: #3b82f6;
-      color: #fff;
-      font-size: 13px;
-      font-weight: 600;
-      cursor: pointer;
+      flex: 1; padding: 9px; border-radius: 6px; border: none;
+      font-size: 12px; font-weight: 600; cursor: pointer;
     }
-    button:hover { background: #2563eb; }
-    .status {
-      margin-top: 12px;
-      font-size: 12px;
-      text-align: center;
-      color: #22c55e;
-      min-height: 16px;
-    }
-    .divider {
-      border: none;
-      border-top: 1px solid #1e293b;
-      margin: 16px 0;
-    }
-    .info {
-      font-size: 11px;
-      color: #64748b;
-      line-height: 1.6;
-    }
+    .btn-save-pat { background: #334155; color: #e2e8f0; }
+    .btn-save-pat:hover { background: #475569; }
+    .btn-flush    { background: #3b82f6; color: #fff; }
+    .btn-flush:hover { background: #2563eb; }
+    .btn-flush:disabled { background: #1e3a5f; color: #64748b; cursor: default; }
+
+    .status { margin-top: 10px; font-size: 12px; text-align: center; min-height: 16px; }
+
+    .divider { border: none; border-top: 1px solid #1e293b; margin: 14px 0; }
+    .info { font-size: 11px; color: #64748b; line-height: 1.6; }
+    .info strong { color: #94a3b8; }
   </style>
 </head>
 <body>
@@ -86,23 +68,38 @@
     <div class="dot" id="statusDot"></div>
     <h1>ChartGPT Notes</h1>
   </div>
+
+  <div class="queue-bar">
+    <div>
+      <div class="queue-label">Notes queued today</div>
+      <div class="queue-sub">Auto-saves at 6 PM</div>
+    </div>
+    <div class="queue-count" id="queueCount">—</div>
+  </div>
+
   <div class="body">
     <label>GitHub Personal Access Token</label>
     <input type="password" id="patInput" placeholder="ghp_..." autocomplete="off">
     <div class="hint">
-      Needs <code>repo</code> scope.
-      <a href="https://github.com/settings/tokens/new" target="_blank" style="color:#3b82f6">Generate one →</a>
+      Needs <code>repo</code> scope. &nbsp;
+      <a href="https://github.com/settings/tokens/new" target="_blank" style="color:#3b82f6">Generate →</a>
     </div>
-    <button id="saveBtn">Save</button>
+
+    <div class="btn-row">
+      <button class="btn-save-pat" id="saveBtn">Save PAT</button>
+      <button class="btn-flush" id="flushBtn" disabled>Save Now</button>
+    </div>
     <div class="status" id="statusMsg"></div>
+
     <hr class="divider">
     <div class="info">
-      Notes save automatically when ChartGPT prints<br>
-      <strong>FINAL-OK TO PRINT</strong> or a <strong>SLIM Billing Block</strong>.<br>
-      Files appear in OneDrive under<br>
-      <em>ChartGPT Notes / Year / Month / Date /</em>
+      Notes are queued silently when ChartGPT outputs
+      <strong>FINAL-OK TO PRINT</strong> or a <strong>SLIM Billing Block</strong>.
+      They upload to OneDrive at <strong>6 PM</strong> automatically, or tap
+      <strong>Save Now</strong> to send immediately.
     </div>
   </div>
+
   <script src="popup.js"></script>
 </body>
 </html>
