@@ -189,7 +189,7 @@ def main():
         print(f"Created: {pdf_path} → {onedrive_dir}/{filename}")
 
     with open("/tmp/uploads.txt", "w") as f:
-        f.write("\n".join(uploads))
+        f.write("\n".join(uploads) + "\n")
 
 
 if __name__ == "__main__":

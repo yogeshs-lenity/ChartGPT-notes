@@ -32,8 +32,13 @@ jobs:
           RCLONE_CONF: ${{ secrets.RCLONE_CONF }}
         run: |
           echo "$RCLONE_CONF" | base64 -d > /tmp/rclone.conf
-          while IFS='|' read -r local_path onedrive_dir; do
+          echo "--- uploads.txt ---"
+          cat /tmp/uploads.txt
+          echo "---"
+          while IFS='|' read -r local_path onedrive_dir || [ -n "$local_path" ]; do
+            [ -z "$local_path" ] && continue
             filename=$(basename "$local_path")
-            rclone --config /tmp/rclone.conf copy "$local_path" "onedrive915:$onedrive_dir/"
+            echo "Uploading: $local_path → onedrive915:$onedrive_dir/"
+            rclone -v --config /tmp/rclone.conf copy "$local_path" "onedrive915:$onedrive_dir/"
             echo "Saved: $onedrive_dir/$filename"
           done < /tmp/uploads.txt
