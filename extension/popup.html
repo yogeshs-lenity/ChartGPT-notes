@@ -2,103 +2,270 @@
 <html>
 <head>
   <meta charset="utf-8">
+  <title>ChartGPT Notes</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:         #0f172a;
+      --surface:    #1e293b;
+      --border:     #334155;
+      --accent:     #3b82f6;
+      --accent-dim: #1b3a6b;
+      --sky:        #38bdf8;
+      --success:    #22c55e;
+      --error:      #ef4444;
+      --text:       #e2e8f0;
+      --text-2:     #94a3b8;
+      --text-3:     #64748b;
+    }
+
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      width: 320px;
-      background: #0f172a;
-      color: #e2e8f0;
+      width: 380px;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 13px;
     }
+
+    /* ── Header ──────────────────────────────────────────────────────── */
     .header {
-      background: #1e3a5f;
-      padding: 14px 18px;
+      background: #1a3456;
+      padding: 11px 16px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      border-bottom: 1px solid #1e3a5f;
+    }
+    .header h1 { font-size: 13px; font-weight: 600; flex: 1; letter-spacing: 0.1px; }
+    .pat-badge {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 10px;
+      letter-spacing: 0.3px;
+    }
+    .pat-badge.ok  { background: #14532d; color: var(--success); }
+    .pat-badge.err { background: #450a0a; color: var(--error);   }
+
+    /* ── Section ─────────────────────────────────────────────────────── */
+    .section { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+    .section:last-child { border-bottom: none; }
+
+    .section-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 9px;
+    }
+    .section-label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.9px;
+      color: var(--text-3);
+    }
+
+    /* ── Note cards ──────────────────────────────────────────────────── */
+    .note-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 190px;
+      overflow-y: auto;
+      margin-bottom: 10px;
+    }
+    .note-list::-webkit-scrollbar { width: 3px; }
+    .note-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .note-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 7px 10px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+    .note-initials {
+      background: var(--accent-dim);
+      color: var(--sky);
+      font-size: 10px;
+      font-weight: 700;
+      padding: 3px 6px;
+      border-radius: 4px;
+      font-family: "SF Mono", "Consolas", monospace;
+      flex-shrink: 0;
+      letter-spacing: 0.5px;
+      min-width: 52px;
+      text-align: center;
+    }
+    .note-meta { flex: 1; min-width: 0; }
+    .note-workflow {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .note-dos { font-size: 10px; color: var(--text-3); margin-top: 1px; }
+
+    .remove-btn {
+      background: none;
+      border: none;
+      color: var(--text-3);
+      cursor: pointer;
+      font-size: 13px;
+      width: 22px;
+      height: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      flex-shrink: 0;
+      line-height: 1;
+    }
+    .remove-btn:hover { background: var(--border); color: var(--error); }
+
+    .queue-empty {
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-3);
+      padding: 10px 0 4px;
+    }
+
+    /* ── Save row ────────────────────────────────────────────────────── */
+    .save-row {
       display: flex;
       align-items: center;
       gap: 10px;
     }
-    .header h1 { font-size: 14px; font-weight: 600; }
-    .dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; flex-shrink: 0; }
-
-    .queue-bar {
-      background: #0f2a4a;
-      padding: 10px 18px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      border-bottom: 1px solid #1e293b;
+    .auto-text {
+      flex: 1;
+      font-size: 11px;
+      color: var(--text-3);
+      line-height: 1.4;
     }
-    .queue-label { font-size: 12px; color: #94a3b8; }
-    .queue-count { font-size: 20px; font-weight: 700; color: #38bdf8; line-height: 1; }
-    .queue-sub   { font-size: 10px; color: #64748b; margin-top: 1px; }
+    .auto-text strong { color: var(--text-2); }
 
-    .body { padding: 16px 18px; }
-    label {
-      font-size: 11px; font-weight: 600; text-transform: uppercase;
-      letter-spacing: 0.8px; color: #94a3b8; display: block; margin-bottom: 5px;
+    /* ── Buttons ─────────────────────────────────────────────────────── */
+    .btn {
+      padding: 7px 13px;
+      border-radius: 6px;
+      border: none;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+      white-space: nowrap;
     }
-    input {
-      width: 100%; padding: 8px 11px; border-radius: 6px;
-      border: 1px solid #334155; background: #1e293b;
-      color: #e2e8f0; font-size: 13px; font-family: "SF Mono", monospace;
+    .btn:disabled { opacity: 0.35; cursor: default; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:not(:disabled):hover { opacity: 0.85; }
+    .btn-ghost {
+      background: var(--surface);
+      color: var(--text-2);
+      border: 1px solid var(--border);
     }
-    input:focus { outline: none; border-color: #3b82f6; }
-    .hint { font-size: 11px; color: #64748b; margin-top: 5px; line-height: 1.5; }
+    .btn-ghost:not(:disabled):hover { background: var(--border); }
+    .btn-sm { padding: 5px 10px; font-size: 11px; }
 
-    .btn-row { display: flex; gap: 8px; margin-top: 14px; }
-    button {
-      flex: 1; padding: 9px; border-radius: 6px; border: none;
-      font-size: 12px; font-weight: 600; cursor: pointer;
+    /* ── Last sent ───────────────────────────────────────────────────── */
+    .last-sent-body { display: flex; align-items: flex-start; gap: 8px; }
+    .last-sent-icon { font-size: 14px; margin-top: 1px; flex-shrink: 0; }
+    .last-sent-info { flex: 1; }
+    .last-sent-label { font-size: 12px; font-weight: 500; }
+    .last-sent-time  { font-size: 10px; color: var(--text-3); margin-top: 2px; }
+    .ok  .last-sent-icon  { color: var(--success); }
+    .err .last-sent-icon  { color: var(--error); }
+    .pending .last-sent-icon { color: var(--sky); }
+    .ok  .last-sent-label { color: var(--text); }
+    .err .last-sent-label { color: var(--error); }
+
+    /* ── PAT section ─────────────────────────────────────────────────── */
+    .pat-row { display: flex; gap: 8px; align-items: center; }
+    .pat-row input {
+      flex: 1;
+      padding: 7px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      font-size: 12px;
+      font-family: "SF Mono", "Consolas", monospace;
     }
-    .btn-save-pat { background: #334155; color: #e2e8f0; }
-    .btn-save-pat:hover { background: #475569; }
-    .btn-flush    { background: #3b82f6; color: #fff; }
-    .btn-flush:hover { background: #2563eb; }
-    .btn-flush:disabled { background: #1e3a5f; color: #64748b; cursor: default; }
+    .pat-row input:focus { outline: none; border-color: var(--accent); }
+    .pat-hint { font-size: 10px; color: var(--text-3); margin-top: 5px; }
+    .pat-hint a { color: var(--accent); text-decoration: none; }
 
-    .status { margin-top: 10px; font-size: 12px; text-align: center; min-height: 16px; }
-
-    .divider { border: none; border-top: 1px solid #1e293b; margin: 14px 0; }
-    .info { font-size: 11px; color: #64748b; line-height: 1.6; }
-    .info strong { color: #94a3b8; }
+    /* ── Toast ───────────────────────────────────────────────────────── */
+    .toast {
+      position: fixed; bottom: 10px; left: 50%;
+      transform: translateX(-50%) translateY(4px);
+      background: var(--surface); border: 1px solid var(--border);
+      color: var(--text); padding: 7px 15px;
+      border-radius: 8px; font-size: 12px; font-weight: 500;
+      white-space: nowrap; opacity: 0;
+      transition: opacity 0.18s, transform 0.18s;
+      pointer-events: none; z-index: 99;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   </style>
 </head>
 <body>
+
+  <!-- Header -->
   <div class="header">
-    <div class="dot" id="statusDot"></div>
     <h1>ChartGPT Notes</h1>
+    <span class="pat-badge err" id="patBadge">No PAT</span>
   </div>
 
-  <div class="queue-bar">
-    <div>
-      <div class="queue-label">Notes queued today</div>
-      <div class="queue-sub">Auto-saves at 6 PM</div>
+  <!-- Queue -->
+  <div class="section">
+    <div class="section-row">
+      <span class="section-label">Queue (<span id="queueCount">0</span>)</span>
     </div>
-    <div class="queue-count" id="queueCount">—</div>
+    <div id="noteList" class="note-list">
+      <div class="queue-empty">No notes queued yet</div>
+    </div>
+    <div class="save-row">
+      <div class="auto-text" id="autoText">Auto-saves at <strong>6:00 PM</strong></div>
+      <button class="btn btn-primary btn-sm" id="flushBtn" disabled>Save Now</button>
+    </div>
   </div>
 
-  <div class="body">
-    <label>GitHub Personal Access Token</label>
-    <input type="password" id="patInput" placeholder="ghp_..." autocomplete="off">
-    <div class="hint">
+  <!-- Last sent -->
+  <div class="section" id="lastSentSection" style="display:none">
+    <div class="section-row">
+      <span class="section-label">Last Sent</span>
+      <button class="btn btn-ghost btn-sm" id="resendBtn">Resend</button>
+    </div>
+    <div id="lastSentBody" class="last-sent-body pending">
+      <span class="last-sent-icon">…</span>
+      <div class="last-sent-info">
+        <div class="last-sent-label" id="lastSentLabel"></div>
+        <div class="last-sent-time"  id="lastSentTime"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- GitHub PAT -->
+  <div class="section">
+    <div class="section-row">
+      <span class="section-label">GitHub PAT</span>
+    </div>
+    <div class="pat-row">
+      <input type="password" id="patInput" placeholder="ghp_..." autocomplete="off">
+      <button class="btn btn-ghost btn-sm" id="savePatBtn">Save</button>
+    </div>
+    <div class="pat-hint">
       Needs <code>repo</code> scope. &nbsp;
-      <a href="https://github.com/settings/tokens/new" target="_blank" style="color:#3b82f6">Generate →</a>
-    </div>
-
-    <div class="btn-row">
-      <button class="btn-save-pat" id="saveBtn">Save PAT</button>
-      <button class="btn-flush" id="flushBtn" disabled>Save Now</button>
-    </div>
-    <div class="status" id="statusMsg"></div>
-
-    <hr class="divider">
-    <div class="info">
-      Notes are queued silently when ChartGPT outputs
-      <strong>FINAL-OK TO PRINT</strong> or a <strong>SLIM Billing Block</strong>.
-      They upload to OneDrive at <strong>6 PM</strong> automatically, or tap
-      <strong>Save Now</strong> to send immediately.
+      <a href="https://github.com/settings/tokens/new" target="_blank">Generate →</a>
     </div>
   </div>
+
+  <div class="toast" id="toast"></div>
 
   <script src="popup.js"></script>
 </body>
