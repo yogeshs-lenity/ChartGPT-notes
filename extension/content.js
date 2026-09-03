@@ -9,7 +9,8 @@ const MSG_SELECTORS = [
   'article[data-testid^="conversation-turn-"]',
 ];
 
-let lastSavedKey     = null;
+// Set of queued note keys — prevents double-queuing within the same page load
+const savedKeys = new Set();
 let observerAttached = false;
 
 // ── Wait for ChatGPT UI to load ───────────────────────────────────────────────
@@ -28,15 +29,19 @@ function attachObserver() {
   if (observerAttached) return;
   observerAttached = true;
 
-  const observer = new MutationObserver(debounce(checkForCompletedNote, 800));
+  const observer = new MutationObserver(debounce(checkForCompletedNotes, 800));
   observer.observe(document.body, { childList: true, subtree: true });
 
-  // Reset dedup key on SPA navigation
+  // Initial scan: detects notes already rendered in the DOM.
+  // Covers navigating to an existing conversation with completed notes.
+  checkForCompletedNotes();
+
+  // Reset on SPA navigation (ChatGPT navigates without a full page reload)
   let lastPath = location.pathname;
   setInterval(() => {
     if (location.pathname !== lastPath) {
       lastPath = location.pathname;
-      lastSavedKey = null;
+      savedKeys.clear();
     }
   }, 1000);
 }
@@ -59,103 +64,96 @@ function getMessages() {
 }
 
 // ── Comprehensive completion detection ────────────────────────────────────────
-// Covers every ChartGPT V10 workflow that produces a saveable final output.
 function isCompletedNote(text) {
-  // ECW Clinic — always ends with FINAL-OK TO PRINT
+  // ECW Clinic
   if (text.includes('FINAL-OK TO PRINT')) return true;
 
-  // Any Cerner output — ends with SLIM Billing Block
-  // (Rounds, Consult, Procedure, Cardiac Cath, Tilt Table, Critical Care, Pre-procedure H&P)
+  // Any Cerner output (Rounds, Consult, Procedure, Cardiac Cath, Tilt Table, Critical Care)
   if (text.includes('SLIM Billing Block') &&
       text.includes('Date of Service:') &&
       text.includes('CPT:')) return true;
 
   // EPIC — ends after Patient Instructions (Spanish), no SLIM
-  // Title always contains "New Consultation" or "Established Follow-Up"
   if (/^#\s+[A-Z]{2,3}\s[A-Z]{2,3}\s+-\s+(New Consultation|Established Follow-Up)/m.test(text) &&
       text.includes('## Patient Instructions (Spanish)')) return true;
 
-  // Wellness Visit — contains Annual Wellness Statement + Spanish instructions
+  // Wellness Visit
   if (text.includes('Annual Wellness Statement') &&
       text.includes('## Patient Instructions (Spanish)')) return true;
 
-  // CCM Telephone Call — ends with Total CCM minutes
+  // CCM Telephone Call
   if (text.includes('CCM Telephone Call') &&
       text.includes('Total CCM minutes:')) return true;
 
-  // New Patient Intake — ends with Spanish instructions
+  // New Patient Intake
   if (text.includes('NEW PATIENT INTAKE') &&
       text.includes('## Patient Instructions (Spanish)')) return true;
 
   // ECW Rhythm Monitoring — folder batch (# 1854-93224 - Rhythm Monitoring - MM/DD/YYYY)
   if (/^#\s+\d+-\d+\s+-\s+Rhythm Monitoring\s+-\s+\d{2}\/\d{2}\/\d{4}/m.test(text)) return true;
 
-  // ECW Rhythm Monitoring — single patient 3-bullet format (no title)
-  // First bullet: - INI TIA - Full Name: INI TIA rhythm monitoring reviewed.
+  // ECW Rhythm Monitoring — single patient 3-bullet format
   if (/^-\s+[A-Z]{2,3}\s[A-Z]{2,3}\s+-\s+.+:\s+[A-Z]{2,3}\s[A-Z]{2,3}\s+rhythm monitoring reviewed\./m.test(text)) return true;
 
   return false;
 }
 
-function checkForCompletedNote() {
+// ── Scan ALL assistant messages for completed notes ───────────────────────────
+// Checking all messages (not just the last) lets us detect every patient in a
+// multi-patient session and recover notes when navigating to existing conversations.
+function checkForCompletedNotes() {
   const messages = getMessages();
   if (!messages.length) return;
 
-  const assistantMsgs = messages.filter(m => m.role === 'assistant');
-  if (!assistantMsgs.length) return;
+  const assistantIdxs = messages
+    .map((m, i) => m.role === 'assistant' ? i : -1)
+    .filter(i => i >= 0);
 
-  const last = assistantMsgs[assistantMsgs.length - 1];
-  const text = last.text;
+  for (const msgIdx of assistantIdxs) {
+    const text = messages[msgIdx].text;
+    if (!isCompletedNote(text)) continue;
 
-  if (!isCompletedNote(text)) return;
+    const key = text.slice(-80);
+    if (savedKeys.has(key)) continue;
+    savedKeys.add(key);
 
-  const key = text.slice(-80);
-  if (key === lastSavedKey) return;
-  lastSavedKey = key;
-
-  const payload = buildPayload(messages, text);
-  chrome.runtime.sendMessage({ type: 'QUEUE_NOTE', payload });
+    const payload = buildPayload(messages, assistantIdxs, msgIdx, text);
+    chrome.runtime.sendMessage({ type: 'QUEUE_NOTE', payload });
+  }
 }
 
 // ── Extract workflow metadata from completed note text ────────────────────────
 function extractNoteMeta(noteText) {
-  const today    = fmt(new Date());
-  const slimDos  = (noteText.match(/Date of Service:\s*(\d{2}\/\d{2}\/\d{4})/) || [])[1] || today;
+  const today   = fmt(new Date());
+  const slimDos = (noteText.match(/Date of Service:\s*(\d{2}\/\d{2}\/\d{4})/) || [])[1] || today;
 
-  // ECW Clinic
-  let m = noteText.match(/^#\s+([A-Z]{2,3}\s[A-Z]{2,3})\s+-\s+ECW Clinic/m);
+  let m;
+
+  m = noteText.match(/^#\s+([A-Z]{2,3}\s[A-Z]{2,3})\s+-\s+ECW Clinic/m);
   if (m) return { initials: m[1], workflow: 'ECW Clinic', dos: today };
 
-  // EPIC
   m = noteText.match(/^#\s+([A-Z]{2,3}\s[A-Z]{2,3})\s+-\s+(New Consultation|Established Follow-Up)/m);
   if (m) return { initials: m[1], workflow: 'EPIC', dos: today };
 
-  // Wellness Visit
   m = noteText.match(/^#\s+([A-Z]{2,3}\s[A-Z]{2,3})\s+-\s+Wellness Visit/m);
   if (m) return { initials: m[1], workflow: 'Wellness Visit', dos: slimDos };
 
-  // CCM Telephone Call
   m = noteText.match(/^#\s+([A-Z]{2,3}\s[A-Z]{2,3})\s+-\s+CCM Telephone Call\s+-\s+(\d{2}\/\d{2}\/\d{4})/m);
   if (m) return { initials: m[1], workflow: 'CCM Telephone Call', dos: m[2] };
 
-  // New Patient Intake (different heading format — no # prefix on first line)
   m = noteText.match(/^([A-Z]{2,3}\s[A-Z]{2,3})\s+-\s+NEW PATIENT INTAKE\s+-\s+(\d{2}\/\d{2}\/\d{4})/m);
   if (m) return { initials: m[1], workflow: 'New Patient Intake', dos: m[2] };
 
-  // ECW Rhythm Monitoring — folder batch
   m = noteText.match(/^#\s+(\d+-\d+)\s+-\s+Rhythm Monitoring\s+-\s+(\d{2}\/\d{2}\/\d{4})/m);
   if (m) return { initials: m[1], workflow: 'ECW Rhythm Monitoring', dos: m[2] };
 
-  // ECW Rhythm Monitoring — single patient 3-bullet
   m = noteText.match(/^-\s+([A-Z]{2,3}\s[A-Z]{2,3})\s+-\s+/m);
   if (m && /rhythm monitoring reviewed/i.test(noteText)) {
     return { initials: m[1], workflow: 'ECW Rhythm Monitoring', dos: today };
   }
 
-  // Cerner variants — extract initials and DOS from SLIM block
   const slimInitials = extractInitialsFromSlim(noteText);
 
-  // Cardiac Cath uses plain-text heading (not markdown #)
   if (/^Cardiac Catheterization\s+-\s+\d{2}\/\d{2}\/\d{4}/m.test(noteText)) {
     return { initials: slimInitials, workflow: 'Cardiac Cath', dos: slimDos };
   }
@@ -172,7 +170,6 @@ function extractNoteMeta(noteText) {
   m = noteText.match(/^#\s+[A-Z]{2,3}\s[A-Z]{2,3}\s+-\s+Pre-Procedure/m);
   if (m) return { initials: slimInitials, workflow: 'Cerner Procedure', dos: slimDos };
 
-  // Generic Cerner fallback (any note with a SLIM block not matched above)
   if (noteText.includes('SLIM Billing Block')) {
     return { initials: slimInitials, workflow: 'Cerner Note', dos: slimDos };
   }
@@ -180,21 +177,21 @@ function extractNoteMeta(noteText) {
   return { initials: 'UNKNOWN', workflow: 'Clinical Note', dos: today };
 }
 
-// ── Build the payload to send to GitHub dispatch ──────────────────────────────
-function buildPayload(messages, noteText) {
+// ── Build the payload for a specific assistant message ────────────────────────
+// msgIdx is the position of this assistant message in the messages array.
+// assistantIdxs lets us find the preceding assistant message so dictation
+// capture is correct even in multi-patient sessions.
+function buildPayload(messages, assistantIdxs, msgIdx, noteText) {
   const today = fmt(new Date());
   const { initials, workflow, dos } = extractNoteMeta(noteText);
 
-  // Dictation = only user messages between previous and current assistant response.
-  // Handles multi-patient sessions correctly despite ChatGPT's lazy DOM loading.
-  const assistantIdxs = messages
-    .map((m, i) => m.role === 'assistant' ? i : -1)
-    .filter(i => i >= 0);
-  const currentIdx = assistantIdxs[assistantIdxs.length - 1] ?? messages.length;
-  const prevIdx    = assistantIdxs[assistantIdxs.length - 2] ?? -1;
+  // Dictation = user messages between the PREVIOUS and CURRENT assistant response.
+  // Handles multi-patient sessions correctly regardless of lazy DOM loading.
+  const myPos  = assistantIdxs.indexOf(msgIdx);
+  const prevIdx = myPos > 0 ? assistantIdxs[myPos - 1] : -1;
 
   const dictation = messages
-    .slice(prevIdx + 1, currentIdx)
+    .slice(prevIdx + 1, msgIdx)
     .filter(m => m.role === 'user')
     .map(m => m.text)
     .join('\n---\n');
