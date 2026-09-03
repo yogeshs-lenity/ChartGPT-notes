@@ -103,15 +103,20 @@ function buildPayload(messages, noteText) {
   const dosMatch = noteText.match(/Date of Service:\s*(\d{2}\/\d{2}\/\d{4})/);
   const dos       = dosMatch ? dosMatch[1] : sessionDate;
 
-  // Dictation = all user messages from this session
-  const userMsgs = messages.filter(m => m.role === 'user');
-  let sessionStart = 0;
-  userMsgs.forEach((m, i) => {
-    if (/^(ECW clinic|CERNHOSP|EPIC dictation|Rhythm monitoring|Dr H|CCM Call|Wellness Visit)\s*-/i.test(m.text)) {
-      sessionStart = i;
-    }
-  });
-  const dictation = userMsgs.slice(sessionStart).map(m => m.text).join('\n---\n');
+  // Dictation = only user messages between the PREVIOUS assistant response
+  // and this one. This handles multi-patient sessions correctly regardless
+  // of how many messages ChatGPT has loaded in the DOM.
+  const assistantIdxs = messages
+    .map((m, i) => m.role === 'assistant' ? i : -1)
+    .filter(i => i >= 0);
+  const currentIdx  = assistantIdxs[assistantIdxs.length - 1] ?? messages.length;
+  const prevIdx     = assistantIdxs[assistantIdxs.length - 2] ?? -1;
+
+  const dictation = messages
+    .slice(prevIdx + 1, currentIdx)
+    .filter(m => m.role === 'user')
+    .map(m => m.text)
+    .join('\n---\n');
 
   return {
     workflow_type:    workflow,
