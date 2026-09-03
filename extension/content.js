@@ -68,8 +68,10 @@ function isCompletedNote(text) {
   // ECW Clinic
   if (text.includes('FINAL-OK TO PRINT')) return true;
 
-  // Any Cerner output (Rounds, Consult, Procedure, Cardiac Cath, Tilt Table, Critical Care)
-  if (text.includes('SLIM Billing Block') &&
+  // Any Cerner/Lexiscan output — two SLIM formats across ChartGPT versions:
+  // V10: "## SLIM Billing Block" (markdown)
+  // Older: "SLIM BILLING" (all-caps plain text, used in Lexiscan sessions)
+  if ((text.includes('SLIM Billing Block') || text.includes('SLIM BILLING')) &&
       text.includes('Date of Service:') &&
       text.includes('CPT:')) return true;
 
@@ -174,6 +176,11 @@ function extractNoteMeta(noteText) {
     return { initials: slimInitials, workflow: 'Cerner Note', dos: slimDos };
   }
 
+  // Lexiscan (older ChartGPT format — "SLIM BILLING" all-caps plain text)
+  if (noteText.includes('SLIM BILLING')) {
+    return { initials: slimInitials, workflow: 'Lexiscan 93018', dos: slimDos };
+  }
+
   return { initials: 'UNKNOWN', workflow: 'Clinical Note', dos: today };
 }
 
@@ -207,7 +214,8 @@ function buildPayload(messages, assistantIdxs, msgIdx, noteText) {
 }
 
 function extractInitialsFromSlim(text) {
-  const m = text.match(/Patient Initials:\s*([A-Z]{2,3}\s[A-Z]{2,3})/);
+  // Handles 2-part (MEL PEA) and 3-part initials (ELY ACE GAR)
+  const m = text.match(/Patient Initials:\s*([A-Z]{2,3}(?:\s[A-Z]{2,3}){1,2})/);
   return m ? m[1] : 'UNKNOWN';
 }
 
