@@ -24,8 +24,10 @@ jobs:
           playwright install-deps chromium
 
       - name: Create PDFs
+        env:
+          PAYLOAD: ${{ toJson(github.event.client_payload) }}
         run: |
-          echo '${{ toJson(github.event.client_payload) }}' | python create_pdf.py
+          echo "$PAYLOAD" | python create_pdf.py
 
       - name: Upload to OneDrive
         env:
