@@ -3,6 +3,9 @@
 const $ = id => document.getElementById(id);
 
 const D = {
+  importUrl:       $('importUrl'),
+  importBtn:       $('importBtn'),
+  importStatus:    $('importStatus'),
   patBadge:        $('patBadge'),
   queueCount:      $('queueCount'),
   noteList:        $('noteList'),
@@ -116,6 +119,23 @@ function renderLastSent(batch) {
 }
 
 // ── Event handlers ────────────────────────────────────────────────────────────
+D.importBtn.addEventListener('click', () => {
+  const url = D.importUrl.value.trim();
+  if (!url.includes('chatgpt.com')) { toast('Enter a ChatGPT URL', true); return; }
+  D.importBtn.disabled = true;
+  D.importBtn.textContent = '…';
+  D.importStatus.textContent = 'Opening tab — auto-closes when done';
+  D.importStatus.style.display = '';
+  chrome.runtime.sendMessage({ type: 'IMPORT_URL', url }, () => {
+    D.importBtn.disabled = false;
+    D.importBtn.textContent = 'Go';
+    D.importUrl.value = '';
+    D.importStatus.style.display = 'none';
+    toast('Import complete — check queue');
+    setTimeout(refreshState, 800);
+  });
+});
+
 D.flushBtn.addEventListener('click', () => {
   D.flushBtn.disabled    = true;
   D.flushBtn.textContent = 'Sending…';

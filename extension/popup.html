@@ -183,6 +183,20 @@
     .ok  .last-sent-label { color: var(--text); }
     .err .last-sent-label { color: var(--error); }
 
+    /* ── Import row ─────────────────────────────────────────────────── */
+    .import-row { display: flex; gap: 8px; align-items: center; }
+    .import-row input {
+      flex: 1;
+      padding: 7px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      font-size: 11px;
+    }
+    .import-row input:focus { outline: none; border-color: var(--accent); }
+    .import-status { font-size: 10px; color: var(--sky); }
+
     /* ── PAT section ─────────────────────────────────────────────────── */
     .pat-row { display: flex; gap: 8px; align-items: center; }
     .pat-row input {
@@ -219,6 +233,18 @@
   <div class="header">
     <h1>ChartGPT Notes</h1>
     <span class="pat-badge err" id="patBadge">No PAT</span>
+  </div>
+
+  <!-- Import URL -->
+  <div class="section">
+    <div class="section-row" style="margin-bottom:8px">
+      <span class="section-label">Import Conversation</span>
+      <span id="importStatus" class="import-status" style="display:none"></span>
+    </div>
+    <div class="import-row">
+      <input type="url" id="importUrl" placeholder="Paste ChatGPT conversation URL…" autocomplete="off">
+      <button class="btn btn-primary btn-sm" id="importBtn">Go</button>
+    </div>
   </div>
 
   <!-- Queue -->

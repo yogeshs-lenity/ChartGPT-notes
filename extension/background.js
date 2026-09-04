@@ -44,6 +44,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     resendLast().then(() => sendResponse({ ok: true }));
     return true; // async
   }
+  if (msg.type === "IMPORT_URL") {
+    importConversation(msg.url).then(() => sendResponse({ ok: true }));
+    return true; // async
+  }
   if (msg.type === "GET_STATE") {
     chrome.storage.local.get(
       ["note_queue", "github_pat", "last_sent_batch"],
@@ -58,6 +62,33 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true; // async
   }
 });
+
+// ── Import a conversation by URL ──────────────────────────────────────────────
+// Opens the URL in a visible tab. The content script's initial scan fires
+// automatically, queuing all detected completed notes. The tab is closed after
+// SCAN_DONE is received from the content script (or after a 15-second timeout).
+async function importConversation(url) {
+  return new Promise(async (resolve) => {
+    const tab = await chrome.tabs.create({ url, active: true });
+    let settled = false;
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      chrome.runtime.onMessage.removeListener(scanListener);
+      clearTimeout(timer);
+      setTimeout(() => chrome.tabs.remove(tab.id).catch(() => {}), 1200);
+      resolve();
+    };
+
+    const timer = setTimeout(finish, 15000);
+
+    const scanListener = (msg, sender) => {
+      if (msg.type === "SCAN_DONE" && sender.tab?.id === tab.id) finish();
+    };
+    chrome.runtime.onMessage.addListener(scanListener);
+  });
+}
 
 // ── Queue a note (with deduplication) ────────────────────────────────────────
 async function queueNote(payload) {

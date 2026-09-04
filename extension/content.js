@@ -36,6 +36,13 @@ function attachObserver() {
   // Covers navigating to an existing conversation with completed notes.
   checkForCompletedNotes();
 
+  // After the page settles, re-scan and signal background that import is done.
+  // The 3-second delay lets ChatGPT finish rendering any remaining messages.
+  setTimeout(() => {
+    checkForCompletedNotes();
+    chrome.runtime.sendMessage({ type: 'SCAN_DONE', count: savedKeys.size }).catch(() => {});
+  }, 3000);
+
   // Reset on SPA navigation (ChatGPT navigates without a full page reload)
   let lastPath = location.pathname;
   setInterval(() => {
