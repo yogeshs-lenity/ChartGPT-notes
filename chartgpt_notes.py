@@ -184,6 +184,10 @@ def metadata(t, session_date):
     dos = kv(t, "Date of Service")
     if not dos:
         m = re.search(rf"^{INITIALS} - .+? - ({DATE})", t, re.M)
+        dos = m.group(1) if m else None
+    if not dos:
+        # Rhythm monitoring folder batch: "NNN-NNN - Rhythm Monitoring - MM/DD/YYYY"
+        m = re.search(rf"^\d+-\d+ - Rhythm Monitoring - ({DATE})", t, re.M)
         dos = m.group(1) if m else session_date
     return {
         "patient_initials": initials or "UNKNOWN",
@@ -418,6 +422,12 @@ def safe(s):
     return re.sub(r"[^A-Za-z0-9]+", "_", s or "UNKNOWN").strip("_")
 
 
+def date_from_title(title):
+    """Extract MM/DD/YYYY from titles that start with MMDDYYYY (e.g. '08312026ecwdrk1')."""
+    m = re.match(r"(\d{2})(\d{2})(\d{4})", title or "")
+    return f"{m.group(1)}/{m.group(2)}/{m.group(3)}" if m else None
+
+
 def parse_session_date(s):
     try:
         return datetime.datetime.strptime(s, "%m/%d/%Y")
@@ -459,7 +469,9 @@ def run_github_actions(pdf_only=False):
         pathlib.Path("/tmp/uploads.txt").write_text("")
         return
 
-    session  = (notes[0].get("date_of_service") if notes else None) or today
+    session  = (notes[0].get("date_of_service") if notes else None) \
+               or date_from_title(conv_title) \
+               or today
     dt       = parse_session_date(session)
     year     = dt.strftime("%Y")
     month    = dt.strftime("%B")

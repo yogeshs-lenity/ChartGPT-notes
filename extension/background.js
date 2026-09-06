@@ -44,17 +44,19 @@ async function dailySave() {
     daily_conv_cache[id] = convData;
   }
 
-  const convIds = Object.keys(daily_conv_cache);
+  // Skip the _date sentinel key when counting/iterating conversations
+  const convIds = Object.keys(daily_conv_cache).filter(k => k !== "_date");
   if (convIds.length) {
     notify("ChartGPT Notes — daily save", `Processing ${convIds.length} conversation(s)…`);
-    for (const convData of Object.values(daily_conv_cache)) {
+    for (const id of convIds) {
       try {
-        await dispatchConversation(convData, github_pat);
+        await dispatchConversation(daily_conv_cache[id], github_pat);
       } catch (e) {
         notify("ChartGPT Notes — dispatch error", e.message);
       }
     }
-    await chrome.storage.local.set({ daily_conv_cache: {} });
+    // Reset cache but keep today's date stamp so stale entries don't re-accumulate
+    await chrome.storage.local.set({ daily_conv_cache: { _date: new Date().toDateString() } });
   }
 
   // Flush any individually queued notes (legacy / manual path)
@@ -66,9 +68,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "RAW_CONV") {
     // Store in memory keyed by tab — used by importConversation()
     if (sender.tab?.id) tabConversations.set(sender.tab.id, msg.data);
-    // Persist to daily cache so it survives if the tab closes before 6:30 AM
-    const convId = msg.data?.conversation_id || String(sender.tab?.id || Date.now());
+    // Persist to daily cache so it survives if the tab closes before 6:30 AM.
+    // Reset the cache when the date changes so old conversations don't bleed into
+    // the next day's dispatch.
+    const convId  = msg.data?.conversation_id || String(sender.tab?.id || Date.now());
+    const todayStr = new Date().toDateString();
     chrome.storage.local.get("daily_conv_cache", ({ daily_conv_cache = {} }) => {
+      if (daily_conv_cache._date !== todayStr) daily_conv_cache = { _date: todayStr };
       daily_conv_cache[convId] = msg.data;
       chrome.storage.local.set({ daily_conv_cache });
     });
