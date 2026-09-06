@@ -347,6 +347,41 @@ def build_section(note):
     return section
 
 
+def build_full_conv_html(msgs, session_label):
+    """Render every message in the conversation chronologically — no filtering."""
+    rows = []
+    for m in msgs:
+        role  = m["role"]
+        text  = pdf_text(m["text"])
+        css   = "user" if role == "user" else "assistant"
+        label = "Physician" if role == "user" else "ChartGPT"
+        body  = (f"<p>{html.escape(text).replace(chr(10), '<br>')}</p>"
+                 if role == "user"
+                 else md_to_html(text))
+        rows.append(f"""
+  <div class="message {css}">
+    <div class="role">{label}</div>
+    {body}
+  </div>""")
+
+    n = len(msgs)
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ChartGPT Session — {html.escape(session_label)}</title>
+<style>{OPENCHATPDF_CSS}</style>
+</head>
+<body>
+  <h1 style="text-align:center;margin-bottom:.4rem;">ChartGPT Session Transcript</h1>
+  <div style="font-size:.9rem;text-align:center;color:#777;margin-bottom:2.5rem;">
+    {n} message{'s' if n != 1 else ''} &nbsp;·&nbsp; {html.escape(session_label)}
+  </div>
+  {''.join(rows)}
+</body>
+</html>"""
+
+
 def build_combined_html(notes, session_label):
     n = len(notes)
     sections = "\n".join(build_section(note) for note in notes)
@@ -403,40 +438,54 @@ def run_github_actions(pdf_only=False):
     data = json.loads(raw)
     today = datetime.date.today().strftime("%m/%d/%Y")
 
+    msgs  = []
+    notes = []
+
     if "conversation" in data:
-        conv   = data["conversation"]
+        conv    = data["conversation"]
         conv_id = conv.get("conversation_id") or "conv"
-        msgs   = messages_from_mapping(conv)
-        notes  = split_notes(conv_id, msgs, today)
+        msgs    = messages_from_mapping(conv)
+        notes   = split_notes(conv_id, msgs, today)
     elif "notes" in data:
         notes = notes_from_legacy(data["notes"], today)
     else:
         print("Unrecognized payload — expected 'conversation' or 'notes'.", file=sys.stderr)
         sys.exit(1)
 
-    if not notes:
-        print("No completed notes detected.")
+    if not notes and not msgs:
+        print("No content detected.")
         pathlib.Path("/tmp/uploads.txt").write_text("")
         return
 
-    session = notes[0].get("session_date", today)
-    dt      = parse_session_date(session)
-    year    = dt.strftime("%Y")
-    month   = dt.strftime("%B")
+    session  = (notes[0].get("session_date") if notes else None) or today
+    dt       = parse_session_date(session)
+    year     = dt.strftime("%Y")
+    month    = dt.strftime("%B")
     date_dir = dt.strftime("%m-%d-%Y")
     saved_on = dt.strftime("%B %d, %Y")
-
-    filename     = f"ChartGPT_Notes_{date_dir}.pdf"
     onedrive_dir = f"ChartGPT Notes/{year}/{month}/{date_dir}"
-    pdf_path     = f"/tmp/{filename}"
 
-    page_html = build_combined_html(notes, saved_on)
-    render_pdf(page_html, pdf_path)
+    uploads = []
 
-    pathlib.Path("/tmp/uploads.txt").write_text(f"{pdf_path}|{onedrive_dir}\n")
-    print(f"Created: {pdf_path} ({len(notes)} notes) → {onedrive_dir}/{filename}")
-    for n in notes:
-        print(f"  {n['patient_initials']:<12} {n['workflow_type']:<20} {n['date_of_service']}  CPT {n['cpt']}")
+    # Filtered notes PDF — structured billing review
+    if notes:
+        notes_filename = f"ChartGPT_Notes_{date_dir}.pdf"
+        notes_path     = f"/tmp/{notes_filename}"
+        render_pdf(build_combined_html(notes, saved_on), notes_path)
+        uploads.append(f"{notes_path}|{onedrive_dir}")
+        print(f"Notes PDF: {notes_path} ({len(notes)} notes) → {onedrive_dir}/{notes_filename}")
+        for n in notes:
+            print(f"  {n['patient_initials']:<12} {n['workflow_type']:<20} {n['date_of_service']}  CPT {n['cpt']}")
+
+    # Full session transcript PDF — every message, nothing filtered out
+    if msgs:
+        sess_filename = f"ChartGPT_Session_{date_dir}.pdf"
+        sess_path     = f"/tmp/{sess_filename}"
+        render_pdf(build_full_conv_html(msgs, saved_on), sess_path)
+        uploads.append(f"{sess_path}|{onedrive_dir}")
+        print(f"Session PDF: {sess_path} ({len(msgs)} messages) → {onedrive_dir}/{sess_filename}")
+
+    pathlib.Path("/tmp/uploads.txt").write_text(("\n".join(uploads) + "\n") if uploads else "")
 
 
 def run_cli():
