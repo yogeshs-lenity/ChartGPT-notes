@@ -457,7 +457,7 @@ def run_github_actions(pdf_only=False):
         pathlib.Path("/tmp/uploads.txt").write_text("")
         return
 
-    session  = (notes[0].get("session_date") if notes else None) or today
+    session  = (notes[0].get("date_of_service") if notes else None) or today
     dt       = parse_session_date(session)
     year     = dt.strftime("%Y")
     month    = dt.strftime("%B")
