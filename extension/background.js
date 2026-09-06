@@ -4,15 +4,16 @@ const GITHUB_REPO         = "yogeshs-lenity/ChartGPT-notes";
 const GITHUB_DISPATCH_URL = `https://api.github.com/repos/${GITHUB_REPO}/dispatches`;
 const GITHUB_CONTENTS_URL = `https://api.github.com/repos/${GITHUB_REPO}/contents`;
 
-const SAVE_HOUR = 18; // 6 PM local time
+const SAVE_HOUR   = 6;  // 6:30 AM IST = 6 PM PDT
+const SAVE_MINUTE = 30;
 
-// ── Schedule daily 6 PM alarm ─────────────────────────────────────────────────
+// ── Schedule daily 6:30 AM alarm ──────────────────────────────────────────────
 function scheduleDailyAlarm() {
   chrome.alarms.get("daily-save", (existing) => {
     if (existing) return;
     const now  = new Date();
     const fire = new Date();
-    fire.setHours(SAVE_HOUR, 0, 0, 0);
+    fire.setHours(SAVE_HOUR, SAVE_MINUTE, 0, 0);
     if (fire <= now) fire.setDate(fire.getDate() + 1);
     chrome.alarms.create("daily-save", { when: fire.getTime(), periodInMinutes: 24 * 60 });
   });
@@ -22,18 +23,55 @@ chrome.runtime.onInstalled.addListener(scheduleDailyAlarm);
 chrome.runtime.onStartup.addListener(scheduleDailyAlarm);
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === "daily-save") flushQueue();
+  if (alarm.name === "daily-save") dailySave();
 });
 
 // Per-tab raw conversation JSON (cleared when tab closes)
 const tabConversations = new Map();
 chrome.tabs.onRemoved.addListener(id => tabConversations.delete(id));
 
+// ── Daily 6:30 AM save ────────────────────────────────────────────────────────
+// Dispatches every conversation captured since the last save, then flushes
+// any individually queued notes. Conversations are stored in daily_conv_cache
+// as they arrive so they survive tab closure before the alarm fires.
+async function dailySave() {
+  const { github_pat, daily_conv_cache = {} } =
+    await chrome.storage.local.get(["github_pat", "daily_conv_cache"]);
+
+  // Merge still-open tabs in case their SCAN_DONE fires late
+  for (const [tabId, convData] of tabConversations) {
+    const id = convData?.conversation_id || String(tabId);
+    daily_conv_cache[id] = convData;
+  }
+
+  const convIds = Object.keys(daily_conv_cache);
+  if (convIds.length) {
+    notify("ChartGPT Notes — daily save", `Processing ${convIds.length} conversation(s)…`);
+    for (const convData of Object.values(daily_conv_cache)) {
+      try {
+        await dispatchConversation(convData, github_pat);
+      } catch (e) {
+        notify("ChartGPT Notes — dispatch error", e.message);
+      }
+    }
+    await chrome.storage.local.set({ daily_conv_cache: {} });
+  }
+
+  // Flush any individually queued notes (legacy / manual path)
+  await flushQueue();
+}
+
 // ── Message handler ───────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "RAW_CONV") {
-    // Store raw conversation JSON keyed by tab — used by importConversation()
+    // Store in memory keyed by tab — used by importConversation()
     if (sender.tab?.id) tabConversations.set(sender.tab.id, msg.data);
+    // Persist to daily cache so it survives if the tab closes before 6:30 AM
+    const convId = msg.data?.conversation_id || String(sender.tab?.id || Date.now());
+    chrome.storage.local.get("daily_conv_cache", ({ daily_conv_cache = {} }) => {
+      daily_conv_cache[convId] = msg.data;
+      chrome.storage.local.set({ daily_conv_cache });
+    });
     sendResponse({ ok: true });
     return;
   }
