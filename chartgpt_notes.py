@@ -438,14 +438,16 @@ def run_github_actions(pdf_only=False):
     data = json.loads(raw)
     today = datetime.date.today().strftime("%m/%d/%Y")
 
-    msgs  = []
-    notes = []
+    msgs       = []
+    notes      = []
+    conv_title = ""
 
     if "conversation" in data:
-        conv    = data["conversation"]
-        conv_id = conv.get("conversation_id") or "conv"
-        msgs    = messages_from_mapping(conv)
-        notes   = split_notes(conv_id, msgs, today)
+        conv       = data["conversation"]
+        conv_id    = conv.get("conversation_id") or "conv"
+        conv_title = (conv.get("title") or "").strip()
+        msgs       = messages_from_mapping(conv)
+        notes      = split_notes(conv_id, msgs, today)
     elif "notes" in data:
         notes = notes_from_legacy(data["notes"], today)
     else:
@@ -465,11 +467,14 @@ def run_github_actions(pdf_only=False):
     saved_on = dt.strftime("%B %d, %Y")
     onedrive_dir = f"ChartGPT Notes/{year}/{month}/{date_dir}"
 
+    # Use the ChatGPT conversation title as the filename base when available
+    title_slug = safe(conv_title) if conv_title else date_dir
+
     uploads = []
 
     # Filtered notes PDF — structured billing review
     if notes:
-        notes_filename = f"ChartGPT_Notes_{date_dir}.pdf"
+        notes_filename = f"{title_slug}_Notes.pdf"
         notes_path     = f"/tmp/{notes_filename}"
         render_pdf(build_combined_html(notes, saved_on), notes_path)
         uploads.append(f"{notes_path}|{onedrive_dir}")
@@ -479,7 +484,7 @@ def run_github_actions(pdf_only=False):
 
     # Full session transcript PDF — every message, nothing filtered out
     if msgs:
-        sess_filename = f"ChartGPT_Session_{date_dir}.pdf"
+        sess_filename = f"{title_slug}_Session.pdf"
         sess_path     = f"/tmp/{sess_filename}"
         render_pdf(build_full_conv_html(msgs, saved_on), sess_path)
         uploads.append(f"{sess_path}|{onedrive_dir}")
