@@ -46,6 +46,6 @@ jobs:
             [ -z "$local_path" ] && continue
             filename=$(basename "$local_path")
             echo "Uploading: $local_path → onedrive915:$onedrive_dir/"
-            rclone -v --config /tmp/rclone.conf copy "$local_path" "onedrive915:$onedrive_dir/"
+            rclone -v --config /tmp/rclone.conf copy "$local_path" "onedrive915:$onedrive_dir"
             echo "Saved: $onedrive_dir/$filename"
           done < /tmp/uploads.txt
