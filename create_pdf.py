@@ -1,6 +1,7 @@
 """
-Generates PDFs using OpenChatPDF's exact HTML/CSS structure,
-rendered by Playwright (headless Chromium) for identical output.
+Generates a single combined PDF for the entire dispatch batch.
+All notes are merged into one document (one page-break-separated section per note).
+Rendered by Playwright (headless Chromium).
 """
 import html
 import json
@@ -11,7 +12,7 @@ from datetime import datetime
 from playwright.sync_api import sync_playwright
 
 
-# ── OpenChatPDF CSS (verbatim from Khan-1291/OpenChatPDF, MIT) ────────────────
+# ── OpenChatPDF-style CSS ─────────────────────────────────────────────────────
 
 OPENCHATPDF_CSS = """
 @page { margin: 1.8cm 1.6cm; }
@@ -22,6 +23,30 @@ body {
   max-width: 900px;
   margin: 0 auto;
   padding: 1rem 0;
+}
+.note-section {
+  margin-bottom: 3rem;
+}
+.note-section + .note-section {
+  page-break-before: always;
+  padding-top: 1rem;
+}
+.note-header {
+  border-left: 4px solid #4a90e2;
+  padding: 0.6rem 1.1rem;
+  margin-bottom: 1.4rem;
+  background: #f0f4ff;
+  border-radius: 0 8px 8px 0;
+}
+.note-header .workflow {
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: #1a1a2e;
+  display: block;
+}
+.note-header .meta {
+  font-size: 0.85rem;
+  color: #555;
 }
 .message {
   margin: 2.4rem 0;
@@ -103,41 +128,62 @@ def md_to_html(text):
     return "\n".join(out)
 
 
-# ── Build the full HTML page ──────────────────────────────────────────────────
+# ── Build one note section ────────────────────────────────────────────────────
 
-def build_html(workflow, initials, dos, dictation, note_content, saved_on):
+def build_note_section(note):
+    workflow  = note["workflow_type"]
+    initials  = note["patient_initials"]
+    dos       = note.get("date_of_service", "")
+    dictation = note.get("dictation", "")
+    content   = note["note_content"]
+
     dicts = [s.strip() for s in (dictation or "").split("\n---\n") if s.strip()]
 
-    messages_html = ""
+    section = f"""
+  <div class="note-section">
+    <div class="note-header">
+      <span class="workflow">{html.escape(workflow)}</span>
+      <span class="meta">{html.escape(initials)} &nbsp;·&nbsp; {html.escape(dos)}</span>
+    </div>
+"""
 
-    # Physician dictation → "You" bubbles (user style)
     for d in dicts:
-        messages_html += f"""
-        <div class="message user">
-          <div class="role">Physician Dictation</div>
-          <p>{html.escape(d)}</p>
-        </div>"""
+        section += f"""
+    <div class="message user">
+      <div class="role">Physician Dictation</div>
+      <p>{html.escape(d)}</p>
+    </div>"""
 
-    # Generated note → "ChatGPT" bubble (assistant style)
-    messages_html += f"""
+    section += f"""
     <div class="message assistant">
       <div class="role">ChartGPT</div>
-      {md_to_html(note_content)}
-    </div>"""
+      {md_to_html(content)}
+    </div>
+  </div>
+"""
+    return section
+
+
+# ── Build the full combined HTML page ────────────────────────────────────────
+
+def build_combined_html(notes, session_label):
+    count = len(notes)
+    note_word = "note" if count == 1 else "notes"
+    sections = "\n".join(build_note_section(n) for n in notes)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>{html.escape(workflow)} — {html.escape(initials)}</title>
+<title>ChartGPT Session Notes — {html.escape(session_label)}</title>
 <style>{OPENCHATPDF_CSS}</style>
 </head>
 <body>
-  <h1 style="text-align:center; margin-bottom:0.4rem;">{html.escape(workflow)}</h1>
-  <div style="font-size:0.9rem; text-align:center; color:#777; margin-bottom:2rem;">
-    {html.escape(initials)} &nbsp;·&nbsp; {html.escape(dos)} &nbsp;·&nbsp; Saved {saved_on}
+  <h1 style="text-align:center; margin-bottom:0.4rem;">ChartGPT Session Notes</h1>
+  <div style="font-size:0.9rem; text-align:center; color:#777; margin-bottom:2.5rem;">
+    {count} {note_word} &nbsp;·&nbsp; {html.escape(session_label)}
   </div>
-  {messages_html}
+  {sections}
 </body>
 </html>"""
 
@@ -153,43 +199,33 @@ def render_pdf(html_str, out_path):
         browser.close()
 
 
-# ── Utilities ─────────────────────────────────────────────────────────────────
-
-def safe(text):
-    return re.sub(r"[^\w\-]", "_", text).strip("_")
-
+# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    data = json.loads(sys.stdin.read())
+    data  = json.loads(sys.stdin.read())
     notes = data["notes"] if "notes" in data else [data]
-    uploads = []
+    if not notes:
+        print("No notes in payload — nothing to do.")
+        return
 
-    for note in notes:
-        workflow  = note["workflow_type"]
-        initials  = note["patient_initials"]
-        dos       = note.get("date_of_service", "")
-        dictation = note.get("dictation", "")
-        content   = note["note_content"]
-        session   = note.get("session_date", data.get("session_date"))
+    session = notes[0].get("session_date", data.get("session_date", ""))
+    dt      = datetime.strptime(session, "%m/%d/%Y")
+    year    = dt.strftime("%Y")
+    month   = dt.strftime("%B")
+    date_dir = dt.strftime("%m-%d-%Y")
+    saved_on = dt.strftime("%B %d, %Y")
 
-        dt        = datetime.strptime(session, "%m/%d/%Y")
-        year      = dt.strftime("%Y")
-        month     = dt.strftime("%B")
-        date_dir  = dt.strftime("%m-%d-%Y")
-        saved_on  = dt.strftime("%B %d, %Y")
+    filename     = f"ChartGPT_Notes_{date_dir}.pdf"
+    onedrive_dir = f"ChartGPT Notes/{year}/{month}/{date_dir}"
+    pdf_path     = f"/tmp/{filename}"
 
-        filename     = f"{safe(workflow)}_{safe(initials)}.pdf"
-        onedrive_dir = f"ChartGPT Notes/{year}/{month}/{date_dir}"
-        pdf_path     = f"/tmp/{filename}"
-
-        page_html = build_html(workflow, initials, dos, dictation, content, saved_on)
-        render_pdf(page_html, pdf_path)
-
-        uploads.append(f"{pdf_path}|{onedrive_dir}")
-        print(f"Created: {pdf_path} → {onedrive_dir}/{filename}")
+    page_html = build_combined_html(notes, saved_on)
+    render_pdf(page_html, pdf_path)
 
     with open("/tmp/uploads.txt", "w") as f:
-        f.write("\n".join(uploads) + "\n")
+        f.write(f"{pdf_path}|{onedrive_dir}\n")
+
+    print(f"Created: {pdf_path} ({len(notes)} notes) → {onedrive_dir}/{filename}")
 
 
 if __name__ == "__main__":

@@ -27,7 +27,7 @@ jobs:
         env:
           PAYLOAD: ${{ toJson(github.event.client_payload) }}
         run: |
-          echo "$PAYLOAD" | python create_pdf.py
+          echo "$PAYLOAD" | python chartgpt_notes.py
 
       - name: Upload to OneDrive
         env:

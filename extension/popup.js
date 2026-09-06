@@ -124,7 +124,7 @@ D.importBtn.addEventListener('click', () => {
   if (!url.includes('chatgpt.com')) { toast('Enter a ChatGPT URL', true); return; }
   D.importBtn.disabled = true;
   D.importBtn.textContent = '…';
-  D.importStatus.textContent = 'Opening tab — auto-closes when done';
+  D.importStatus.textContent = 'Fetching full transcript — auto-closes when done';
   D.importStatus.style.display = '';
   chrome.runtime.sendMessage({ type: 'IMPORT_URL', url }, () => {
     D.importBtn.disabled = false;

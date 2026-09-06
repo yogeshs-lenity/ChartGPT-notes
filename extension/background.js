@@ -24,8 +24,18 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === "daily-save") flushQueue();
 });
 
+// Per-tab raw conversation JSON (cleared when tab closes)
+const tabConversations = new Map();
+chrome.tabs.onRemoved.addListener(id => tabConversations.delete(id));
+
 // ── Message handler ───────────────────────────────────────────────────────────
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === "RAW_CONV") {
+    // Store raw conversation JSON keyed by tab — used by importConversation()
+    if (sender.tab?.id) tabConversations.set(sender.tab.id, msg.data);
+    sendResponse({ ok: true });
+    return;
+  }
   if (msg.type === "QUEUE_NOTE") {
     queueNote(msg.payload);
     sendResponse({ ok: true });
@@ -81,10 +91,23 @@ async function importConversation(url) {
       resolve();
     };
 
-    const timer = setTimeout(finish, 15000);
+    const timer = setTimeout(finish, 45000);
 
-    const scanListener = (msg, sender) => {
-      if (msg.type === "SCAN_DONE" && sender.tab?.id === tab.id) finish();
+    const scanListener = async (msg, sender) => {
+      if (msg.type !== "SCAN_DONE" || sender.tab?.id !== tab.id) return;
+
+      // Prefer raw conversation JSON → chartgpt_notes.py does all detection
+      const rawConv = tabConversations.get(tab.id);
+      if (rawConv) {
+        const { github_pat } = await chrome.storage.local.get("github_pat");
+        await dispatchConversation(rawConv, github_pat);
+        finish();
+        return;
+      }
+
+      // Fallback: flush whatever individual notes the content script queued
+      await flushQueue();
+      finish();
     };
     chrome.runtime.onMessage.addListener(scanListener);
   });
@@ -127,6 +150,46 @@ async function resendLast() {
   const { last_sent_batch, github_pat } = await chrome.storage.local.get(["last_sent_batch", "github_pat"]);
   if (!last_sent_batch?.notes?.length) return;
   await dispatch(last_sent_batch.notes, github_pat, /* clearQueueOnSuccess */ false);
+}
+
+// ── Dispatch raw conversation JSON (new path — chartgpt_notes.py detects) ────
+async function dispatchConversation(convData, github_pat) {
+  if (!github_pat) {
+    notify("ChartGPT Notes", "Open the extension and enter your GitHub PAT.");
+    return;
+  }
+  const batch = {
+    notes:   [],
+    count:   0,
+    sent_at: new Date().toISOString(),
+    status:  "sending",
+    summaries: ["Full conversation — chartgpt_notes.py will detect notes"],
+  };
+  await chrome.storage.local.set({ last_sent_batch: batch });
+  try {
+    const resp = await fetch(GITHUB_DISPATCH_URL, {
+      method:  "POST",
+      headers: {
+        "Accept":        "application/vnd.github+json",
+        "Authorization": `Bearer ${github_pat}`,
+        "Content-Type":  "application/json",
+      },
+      body: JSON.stringify({
+        event_type:     "save_chartgpt_note",
+        client_payload: { conversation: convData },
+      }),
+    });
+    if (resp.status === 204) {
+      await chrome.storage.local.set({ last_sent_batch: { ...batch, status: "sent", count: 1 } });
+      notify("✓ Conversation dispatched — PDF generating", "chartgpt_notes.py will extract all notes");
+    } else {
+      await chrome.storage.local.set({ last_sent_batch: { ...batch, status: "error", error: `HTTP ${resp.status}` } });
+      notify("ChartGPT Notes — dispatch failed", `HTTP ${resp.status}`);
+    }
+  } catch (err) {
+    await chrome.storage.local.set({ last_sent_batch: { ...batch, status: "error", error: err.message } });
+    notify("ChartGPT Notes — network error", err.message);
+  }
 }
 
 // ── Core dispatch ─────────────────────────────────────────────────────────────
