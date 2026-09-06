@@ -1,7 +1,8 @@
 // ChartGPT Notes — background service worker
 
-const GITHUB_DISPATCH_URL =
-  "https://api.github.com/repos/yogeshs-lenity/ChartGPT-notes/dispatches";
+const GITHUB_REPO         = "yogeshs-lenity/ChartGPT-notes";
+const GITHUB_DISPATCH_URL = `https://api.github.com/repos/${GITHUB_REPO}/dispatches`;
+const GITHUB_CONTENTS_URL = `https://api.github.com/repos/${GITHUB_REPO}/contents`;
 
 const SAVE_HOUR = 18; // 6 PM local time
 
@@ -152,6 +153,40 @@ async function resendLast() {
   await dispatch(last_sent_batch.notes, github_pat, /* clearQueueOnSuccess */ false);
 }
 
+// ── Upload payload to repo inbox (bypasses GitHub's 25KB dispatch limit) ─────
+// Writes JSON to inbox/notes_<ts>.json via Contents API, returns the path.
+// The workflow reads and deletes the file. PAT needs repo (classic) or
+// Contents:write (fine-grained) scope.
+async function uploadToInbox(payload, pat) {
+  const path = `inbox/notes_${Date.now()}.json`;
+  const json = JSON.stringify(payload);
+  // btoa requires latin1; encode UTF-8 bytes correctly
+  const bytes = new TextEncoder().encode(json);
+  const binStr = Array.from(bytes, b => String.fromCharCode(b)).join('');
+  const base64 = btoa(binStr);
+
+  const resp = await fetch(`${GITHUB_CONTENTS_URL}/${path}`, {
+    method:  "PUT",
+    headers: {
+      "Accept":        "application/vnd.github+json",
+      "Authorization": `Bearer ${pat}`,
+      "Content-Type":  "application/json",
+    },
+    body: JSON.stringify({
+      message: `ChartGPT Notes inbox — ${new Date().toISOString()}`,
+      content: base64,
+    }),
+  });
+
+  if (!resp.ok) {
+    const body = await resp.text();
+    let msg = '';
+    try { msg = JSON.parse(body)?.message; } catch {}
+    throw new Error(`Inbox upload HTTP ${resp.status}: ${msg || body.slice(0, 120)}`);
+  }
+  return path;
+}
+
 // ── Dispatch raw conversation JSON (new path — chartgpt_notes.py detects) ────
 async function dispatchConversation(convData, github_pat) {
   if (!github_pat) {
@@ -159,14 +194,15 @@ async function dispatchConversation(convData, github_pat) {
     return;
   }
   const batch = {
-    notes:   [],
-    count:   0,
-    sent_at: new Date().toISOString(),
-    status:  "sending",
+    notes:     [],
+    count:     0,
+    sent_at:   new Date().toISOString(),
+    status:    "sending",
     summaries: ["Full conversation — chartgpt_notes.py will detect notes"],
   };
   await chrome.storage.local.set({ last_sent_batch: batch });
   try {
+    const inboxPath = await uploadToInbox({ conversation: convData }, github_pat);
     const resp = await fetch(GITHUB_DISPATCH_URL, {
       method:  "POST",
       headers: {
@@ -176,19 +212,22 @@ async function dispatchConversation(convData, github_pat) {
       },
       body: JSON.stringify({
         event_type:     "save_chartgpt_note",
-        client_payload: { conversation: convData },
+        client_payload: { inbox_file: inboxPath },
       }),
     });
     if (resp.status === 204) {
       await chrome.storage.local.set({ last_sent_batch: { ...batch, status: "sent", count: 1 } });
       notify("✓ Conversation dispatched — PDF generating", "chartgpt_notes.py will extract all notes");
     } else {
-      await chrome.storage.local.set({ last_sent_batch: { ...batch, status: "error", error: `HTTP ${resp.status}` } });
-      notify("ChartGPT Notes — dispatch failed", `HTTP ${resp.status}`);
+      const body2 = await resp.text();
+      let detail2 = '';
+      try { detail2 = JSON.parse(body2)?.message || body2.slice(0, 120); } catch { detail2 = body2.slice(0, 120); }
+      await chrome.storage.local.set({ last_sent_batch: { ...batch, status: "error", error: `HTTP ${resp.status}: ${detail2}` } });
+      notify(`ChartGPT Notes — HTTP ${resp.status}`, detail2 || "Open popup to retry.");
     }
   } catch (err) {
     await chrome.storage.local.set({ last_sent_batch: { ...batch, status: "error", error: err.message } });
-    notify("ChartGPT Notes — network error", err.message);
+    notify("ChartGPT Notes — upload/dispatch error", err.message);
   }
 }
 
@@ -210,6 +249,10 @@ async function dispatch(notes, github_pat, clearQueueOnSuccess) {
   await chrome.storage.local.set({ last_sent_batch: batch });
 
   try {
+    // Upload full notes array (with note_content) to repo inbox — GitHub's
+    // 25KB client_payload limit would reject clinical note content directly.
+    const inboxPath = await uploadToInbox({ notes }, github_pat);
+
     const resp = await fetch(GITHUB_DISPATCH_URL, {
       method: "POST",
       headers: {
@@ -219,7 +262,7 @@ async function dispatch(notes, github_pat, clearQueueOnSuccess) {
       },
       body: JSON.stringify({
         event_type:     "save_chartgpt_note",
-        client_payload: { notes },
+        client_payload: { inbox_file: inboxPath },
       }),
     });
 
@@ -236,13 +279,14 @@ async function dispatch(notes, github_pat, clearQueueOnSuccess) {
       );
     } else {
       const body = await resp.text();
-      // Queue is NOT cleared — notes remain available for retry
+      let detail = '';
+      try { detail = JSON.parse(body)?.message || body.slice(0, 120); } catch { detail = body.slice(0, 120); }
       await chrome.storage.local.set({
-        last_sent_batch: { ...batch, status: "error", error: `HTTP ${resp.status}` },
+        last_sent_batch: { ...batch, status: "error", error: `HTTP ${resp.status}: ${detail}` },
       });
       notify(
-        "ChartGPT Notes — dispatch failed",
-        `HTTP ${resp.status} — notes preserved. Open popup to retry.`
+        `ChartGPT Notes — HTTP ${resp.status}`,
+        detail || "Open popup to retry."
       );
     }
   } catch (err) {

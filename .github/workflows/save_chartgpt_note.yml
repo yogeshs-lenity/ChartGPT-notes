@@ -23,11 +23,48 @@ jobs:
           playwright install chromium
           playwright install-deps chromium
 
-      - name: Create PDFs
+      - name: Download inbox file and create PDFs
         env:
-          PAYLOAD: ${{ toJson(github.event.client_payload) }}
+          INBOX_FILE: ${{ github.event.client_payload.inbox_file }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "$PAYLOAD" | python chartgpt_notes.py
+          python3 - <<'PYEOF'
+import base64, json, os, urllib.request
+
+token = os.environ["GH_TOKEN"]
+path  = os.environ.get("INBOX_FILE", "")
+if not path:
+    raise SystemExit("No inbox_file in payload")
+
+url = f"https://api.github.com/repos/yogeshs-lenity/ChartGPT-notes/contents/{path}"
+req = urllib.request.Request(url, headers={
+    "Authorization": f"Bearer {token}",
+    "Accept": "application/vnd.github+json",
+})
+with urllib.request.urlopen(req) as r:
+    data = json.loads(r.read())
+
+# GitHub returns base64 with line breaks — strip them before decoding
+content = base64.b64decode(data["content"].replace("\n", "")).decode("utf-8")
+sha = data["sha"]
+
+with open("/tmp/payload.json", "w") as f:
+    f.write(content)
+
+# Delete the inbox file now that we have the content
+del_req = urllib.request.Request(
+    url, method="DELETE",
+    data=json.dumps({"message": f"Process: {path}", "sha": sha}).encode(),
+    headers={
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/vnd.github+json",
+    },
+)
+with urllib.request.urlopen(del_req) as r:
+    print(f"Deleted inbox file: {path}")
+PYEOF
+          cat /tmp/payload.json | python chartgpt_notes.py
 
       - name: Upload to OneDrive
         env:
