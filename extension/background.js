@@ -87,7 +87,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
   if (msg.type === "FLUSH_NOW") {
-    flushQueue();
+    dailySave();  // dispatches captured conversations + legacy queue
     sendResponse({ ok: true });
     return;
   }
@@ -105,12 +105,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === "GET_STATE") {
     chrome.storage.local.get(
-      ["note_queue", "github_pat", "last_sent_batch"],
-      ({ note_queue, github_pat, last_sent_batch }) => {
+      ["note_queue", "github_pat", "last_sent_batch", "daily_conv_cache"],
+      ({ note_queue, github_pat, last_sent_batch, daily_conv_cache = {} }) => {
+        const convIds = Object.keys(daily_conv_cache).filter(k => k !== "_date");
         sendResponse({
-          queue:     note_queue     || [],
-          hasPat:    !!github_pat,
-          lastBatch: last_sent_batch || null,
+          queue:      note_queue     || [],
+          hasPat:     !!github_pat,
+          lastBatch:  last_sent_batch || null,
+          convCount:  convIds.length,
+          convTitles: convIds.map(id => (daily_conv_cache[id]?.title || id).slice(0, 55)),
         });
       }
     );

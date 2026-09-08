@@ -7,6 +7,8 @@ const D = {
   importBtn:       $('importBtn'),
   importStatus:    $('importStatus'),
   patBadge:        $('patBadge'),
+  capturedCount:   $('capturedCount'),
+  capturedList:    $('capturedList'),
   queueCount:      $('queueCount'),
   noteList:        $('noteList'),
   autoText:        $('autoText'),
@@ -21,7 +23,7 @@ const D = {
   toast:           $('toast'),
 };
 
-let state = { queue: [], hasPat: false, lastBatch: null };
+let state = { queue: [], hasPat: false, lastBatch: null, convCount: 0, convTitles: [] };
 
 // Load state from background on open
 chrome.runtime.sendMessage({ type: 'GET_STATE' }, resp => {
@@ -44,10 +46,21 @@ function render() {
     D.patBadge.className = 'pat-badge err';
   }
 
+  // Captured conversations (daily_conv_cache)
+  const cc = state.convCount || 0;
+  D.capturedCount.textContent = cc;
+  if (cc === 0) {
+    D.capturedList.innerHTML = '<div class="queue-empty">No conversations captured yet</div>';
+  } else {
+    D.capturedList.innerHTML = (state.convTitles || []).map(t =>
+      `<div class="note-card"><div class="note-meta"><div class="note-workflow">${esc(t)}</div></div></div>`
+    ).join('');
+  }
+
   // Queue count + cards
   const q = state.queue;
   D.queueCount.textContent = q.length;
-  D.flushBtn.disabled = q.length === 0;
+  D.flushBtn.disabled = (q.length === 0 && cc === 0);
 
   if (q.length === 0) {
     D.noteList.innerHTML = '<div class="queue-empty">No notes queued yet</div>';
@@ -92,7 +105,7 @@ function render() {
 function renderAutoSave() {
   const now  = new Date();
   const fire = new Date();
-  fire.setHours(18, 0, 0, 0);
+  fire.setHours(6, 30, 0, 0);
   if (fire <= now) fire.setDate(fire.getDate() + 1);
 
   const diff = fire - now;

@@ -247,7 +247,17 @@
     </div>
   </div>
 
-  <!-- Queue -->
+  <!-- Captured today (full conversations in daily cache) -->
+  <div class="section">
+    <div class="section-row" style="margin-bottom:6px">
+      <span class="section-label">Captured Today (<span id="capturedCount">0</span>)</span>
+    </div>
+    <div id="capturedList" class="note-list" style="max-height:110px">
+      <div class="queue-empty">No conversations captured yet</div>
+    </div>
+  </div>
+
+  <!-- Queue (legacy individual notes) -->
   <div class="section">
     <div class="section-row">
       <span class="section-label">Queue (<span id="queueCount">0</span>)</span>
@@ -256,8 +266,8 @@
       <div class="queue-empty">No notes queued yet</div>
     </div>
     <div class="save-row">
-      <div class="auto-text" id="autoText">Auto-saves at <strong>6:00 PM</strong></div>
-      <button class="btn btn-primary btn-sm" id="flushBtn" disabled>Save Now</button>
+      <div class="auto-text" id="autoText">Auto-saves <strong>6:30 AM</strong></div>
+      <button class="btn btn-primary btn-sm" id="flushBtn">Save Now</button>
     </div>
   </div>
 
