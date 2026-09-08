@@ -188,7 +188,8 @@ def metadata(t, session_date):
     if not dos:
         # Rhythm monitoring folder batch: "NNN-NNN - Rhythm Monitoring - MM/DD/YYYY"
         m = re.search(rf"^\d+-\d+ - Rhythm Monitoring - ({DATE})", t, re.M)
-        dos = m.group(1) if m else session_date
+        dos = m.group(1) if m else None
+    # Callers resolve None → title date → today; don't bake session_date in here
     return {
         "patient_initials": initials or "UNKNOWN",
         "workflow_type":    workflow,
@@ -469,9 +470,14 @@ def run_github_actions(pdf_only=False):
         pathlib.Path("/tmp/uploads.txt").write_text("")
         return
 
+    # Priority: date from note content → date from conversation title → today
+    # (note content returns None when no Date of Service field found, e.g. ECW Clinic)
     session  = (notes[0].get("date_of_service") if notes else None) \
                or date_from_title(conv_title) \
                or today
+    # If the note fell back to today but the title has a better date, prefer the title
+    if session == today and conv_title:
+        session = date_from_title(conv_title) or today
     dt       = parse_session_date(session)
     year     = dt.strftime("%Y")
     month    = dt.strftime("%B")

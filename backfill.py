@@ -26,6 +26,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import chartgpt_notes as cn
+from chartgpt_notes import date_from_title
 
 
 def process_conversation(conv, out_root, today, stats):
@@ -37,7 +38,9 @@ def process_conversation(conv, out_root, today, stats):
         return
 
     notes   = cn.split_notes(conv_id, msgs, today)
-    session = (notes[0].get("date_of_service") if notes else None) or today
+    session = (notes[0].get("date_of_service") if notes else None) \
+              or date_from_title(conv_title) \
+              or today
     dt      = cn.parse_session_date(session)
 
     folder = (out_root
