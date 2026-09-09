@@ -474,14 +474,13 @@ def run_github_actions(pdf_only=False):
         pathlib.Path("/tmp/uploads.txt").write_text("")
         return
 
-    # Priority: date from note content → date from conversation title → today
-    # (note content returns None when no Date of Service field found, e.g. ECW Clinic)
-    session  = (notes[0].get("date_of_service") if notes else None) \
-               or date_from_title(conv_title) \
+    # Priority: conversation title date → date from note content → today
+    # Title date is the doctor's own label for when the session occurred
+    # (e.g. rhythm monitoring reviewed Sep 7 has DOS=Aug 11 in the note body,
+    # but the title 09072026... correctly places it in the Sep 7 folder)
+    session  = date_from_title(conv_title) \
+               or (notes[0].get("date_of_service") if notes else None) \
                or today
-    # If the note fell back to today but the title has a better date, prefer the title
-    if session == today and conv_title:
-        session = date_from_title(conv_title) or today
     dt       = parse_session_date(session)
     year     = dt.strftime("%Y")
     month    = dt.strftime("%B")
