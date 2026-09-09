@@ -188,8 +188,7 @@ def metadata(t, session_date):
     if not dos:
         # Rhythm monitoring folder batch: "NNN-NNN - Rhythm Monitoring - MM/DD/YYYY"
         m = re.search(rf"^\d+-\d+ - Rhythm Monitoring - ({DATE})", t, re.M)
-        dos = m.group(1) if m else None
-    # Callers resolve None → title date → today; don't bake session_date in here
+        dos = m.group(1) if m else session_date
     return {
         "patient_initials": initials or "UNKNOWN",
         "workflow_type":    workflow,
