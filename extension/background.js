@@ -57,10 +57,13 @@ async function dailySave() {
     }
     // Reset cache but keep today's date stamp so stale entries don't re-accumulate
     await chrome.storage.local.set({ daily_conv_cache: { _date: new Date().toDateString() } });
+    // Full conversations already contain everything — clear the legacy queue so it
+    // doesn't create a second duplicate run for the same session
+    await chrome.storage.local.set({ note_queue: [] });
+  } else {
+    // No full conversations captured — fall back to legacy individually-queued notes
+    await flushQueue();
   }
-
-  // Flush any individually queued notes (legacy / manual path)
-  await flushQueue();
 }
 
 // ── Message handler ───────────────────────────────────────────────────────────
