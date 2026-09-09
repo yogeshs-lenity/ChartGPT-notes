@@ -24,6 +24,9 @@ import json
 import pathlib
 import re
 import sys
+import zoneinfo
+
+_PST = zoneinfo.ZoneInfo("America/Los_Angeles")
 
 
 # ─────────────────────────── 1. load messages ────────────────────────────────
@@ -446,7 +449,9 @@ def run_github_actions(pdf_only=False):
     """
     raw  = sys.stdin.read()
     data = json.loads(raw)
-    today = datetime.date.today().strftime("%m/%d/%Y")
+    # Use Pacific time so dictations done late at night IST resolve to the
+    # correct PST date (e.g. 1 AM IST on Sep 9 = Sep 8 PST)
+    today = datetime.datetime.now(_PST).strftime("%m/%d/%Y")
 
     msgs       = []
     notes      = []
