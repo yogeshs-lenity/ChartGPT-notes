@@ -41,5 +41,12 @@ del_req  = urllib.request.Request(
         "Accept":        "application/vnd.github+json",
     },
 )
-with urllib.request.urlopen(del_req) as r:
-    print(f"Deleted inbox file: {path}")
+try:
+    with urllib.request.urlopen(del_req) as r:
+        print(f"Deleted inbox file: {path}")
+except urllib.error.HTTPError as e:
+    if e.code == 409:
+        # Another concurrent run already deleted the file — that's fine
+        print(f"Inbox file already deleted by concurrent run (409): {path}")
+    else:
+        raise
