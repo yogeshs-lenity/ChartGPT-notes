@@ -3,11 +3,14 @@ name: Save ChartGPT Note to OneDrive
 on:
   repository_dispatch:
     types: [save_chartgpt_note]
+  schedule:
+    - cron: '0 6 * * *'   # 10 PM PST / 11 PM PDT — processes all pending inbox files
+  workflow_dispatch: {}    # manual trigger from GitHub UI (for backfill / testing)
 
 jobs:
   save-note:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: write
 
@@ -25,11 +28,16 @@ jobs:
           playwright install chromium
           playwright install-deps chromium
 
-      - name: Download inbox file
+      - name: Download inbox file(s)
         env:
           INBOX_FILE: ${{ github.event.client_payload.inbox_file }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python read_inbox.py
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            python read_inbox.py --all
+          else
+            python read_inbox.py
+          fi
 
       - name: Create PDFs
         run: cat /tmp/payload.json | python chartgpt_notes.py

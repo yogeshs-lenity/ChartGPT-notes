@@ -457,6 +457,50 @@ def run_github_actions(pdf_only=False):
     notes      = []
     conv_title = ""
 
+    if "conversations" in data:
+        # Cron / batch mode — list of conversation objects
+        all_uploads = []
+        for conv in data["conversations"]:
+            conv_id    = conv.get("conversation_id") or "conv"
+            conv_title = (conv.get("title") or "").strip()
+            msgs       = messages_from_mapping(conv)
+            notes      = split_notes(conv_id, msgs, today)
+            if not notes and not msgs:
+                print(f"  [{conv_title or conv_id}] no content — skipped")
+                continue
+            session      = date_from_title(conv_title) or (notes[0].get("date_of_service") if notes else None) or today
+            dt           = parse_session_date(session)
+            onedrive_dir = f"ChartGPT Notes/{dt.strftime('%Y')}/{dt.strftime('%B')}/{dt.strftime('%m-%d-%Y')}"
+            saved_on     = dt.strftime("%B %d, %Y")
+            title_slug   = safe(conv_title) if conv_title else dt.strftime("%m-%d-%Y")
+            if notes:
+                notes_path = f"/tmp/{title_slug}_Notes.pdf"
+                render_pdf(build_combined_html(notes, saved_on), notes_path)
+                all_uploads.append(f"{notes_path}|{onedrive_dir}")
+                print(f"Notes PDF: {notes_path} ({len(notes)} notes) → {onedrive_dir}")
+                for n in notes:
+                    print(f"  {n['patient_initials']:<12} {n['workflow_type']:<20} {n['date_of_service']}  CPT {n['cpt']}")
+            if msgs:
+                sess_path = f"/tmp/{title_slug}_Session.pdf"
+                render_pdf(build_full_conv_html(msgs, saved_on), sess_path)
+                all_uploads.append(f"{sess_path}|{onedrive_dir}")
+                print(f"Session PDF: {sess_path} ({len(msgs)} messages) → {onedrive_dir}")
+        # Also handle any legacy notes bundled alongside conversations
+        if "notes" in data:
+            legacy = notes_from_legacy(data["notes"], today)
+            if legacy:
+                session      = legacy[0].get("date_of_service") or today
+                dt           = parse_session_date(session)
+                onedrive_dir = f"ChartGPT Notes/{dt.strftime('%Y')}/{dt.strftime('%B')}/{dt.strftime('%m-%d-%Y')}"
+                saved_on     = dt.strftime("%B %d, %Y")
+                notes_path   = f"/tmp/legacy_Notes.pdf"
+                render_pdf(build_combined_html(legacy, saved_on), notes_path)
+                all_uploads.append(f"{notes_path}|{onedrive_dir}")
+        pathlib.Path("/tmp/uploads.txt").write_text(("\n".join(all_uploads) + "\n") if all_uploads else "")
+        if not all_uploads:
+            print("No content detected in any conversation.")
+        return
+
     if "conversation" in data:
         conv       = data["conversation"]
         conv_id    = conv.get("conversation_id") or "conv"
@@ -466,7 +510,7 @@ def run_github_actions(pdf_only=False):
     elif "notes" in data:
         notes = notes_from_legacy(data["notes"], today)
     else:
-        print("Unrecognized payload — expected 'conversation' or 'notes'.", file=sys.stderr)
+        print("Unrecognized payload — expected 'conversation', 'conversations', or 'notes'.", file=sys.stderr)
         sys.exit(1)
 
     if not notes and not msgs:
