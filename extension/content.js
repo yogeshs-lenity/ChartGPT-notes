@@ -72,14 +72,21 @@ function attachObserver() {
     chrome.runtime.sendMessage({ type: 'SCAN_DONE', count: savedKeys.size }).catch(() => {});
   })();
 
-  // Reset on SPA navigation (ChatGPT navigates without a full page reload)
-  let lastPath = location.pathname;
-  setInterval(() => {
-    if (location.pathname !== lastPath) {
-      lastPath = location.pathname;
-      savedKeys.clear();
+  // React to every conversation the injector captures (including SPA navigations).
+  // injector.js fires 'cgn-conv-ready' each time window.__cgn_conv__ is updated.
+  const sentConvIds = new Set();
+  window.addEventListener('cgn-conv-ready', (e) => {
+    const convId = e.detail?.id;
+    if (convId && sentConvIds.has(convId)) return;  // already sent this conv
+    if (convId) sentConvIds.add(convId);
+    savedKeys.clear();  // new conversation — reset DOM dedup
+    const convData = window.__cgn_conv__;
+    if (convData) {
+      chrome.runtime.sendMessage({ type: 'RAW_CONV', data: convData }).catch(() => {});
+      const messages = flattenConversation(convData);
+      if (messages.length) processMessages(messages);
     }
-  }, 1000);
+  });
 }
 
 // ── Get all messages using OpenChatPDF selectors ──────────────────────────────

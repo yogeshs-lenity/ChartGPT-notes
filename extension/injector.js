@@ -9,7 +9,10 @@
       const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url ?? '');
       if (/\/backend-api\/conversation\/[a-f0-9-]+(?:[?#]|$)/.test(url)) {
         resp.clone().json().then(d => {
-          if (d?.mapping) window.__cgn_conv__ = d;
+          if (d?.mapping) {
+            window.__cgn_conv__ = d;
+            window.dispatchEvent(new CustomEvent('cgn-conv-ready', { detail: { id: d.conversation_id } }));
+          }
         }).catch(() => {});
       }
     } catch {}
