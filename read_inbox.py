@@ -52,7 +52,22 @@ def fetch_and_delete(path):
     """Fetch one inbox file, delete it from the repo, return parsed JSON or None if empty."""
     url  = f"{API}/{path}"
     data = _get(url)
-    raw  = base64.b64decode(data["content"].replace("\n", "")).decode("utf-8").strip()
+
+    # GitHub Contents API returns content="" for files >1 MB; use download_url instead.
+    encoded = (data.get("content") or "").replace("\n", "")
+    if encoded:
+        raw = base64.b64decode(encoded).decode("utf-8").strip()
+    else:
+        dl_url = data.get("download_url")
+        if not dl_url:
+            print(f"  Warning: {path} has no content and no download_url — skipping")
+            _delete(url, data["sha"], f"Process: {path}")
+            return None
+        print(f"  File >1 MB — fetching via download_url")
+        req = urllib.request.Request(dl_url, headers=HEADERS)
+        with urllib.request.urlopen(req) as r:
+            raw = r.read().decode("utf-8").strip()
+
     _delete(url, data["sha"], f"Process: {path}")
     print(f"Fetched + deleted: {path}")
     if not raw:
