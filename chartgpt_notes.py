@@ -501,6 +501,10 @@ def run_github_actions(pdf_only=False):
             print("No content detected in any conversation.")
         return
 
+    if not data:
+        print("Empty payload — nothing to process.")
+        pathlib.Path("/tmp/uploads.txt").write_text("")
+        return
     if "conversation" in data:
         conv       = data["conversation"]
         conv_id    = conv.get("conversation_id") or "conv"
