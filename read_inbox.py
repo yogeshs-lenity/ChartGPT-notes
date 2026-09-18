@@ -49,12 +49,15 @@ def _delete(url, sha, message):
 
 
 def fetch_and_delete(path):
-    """Fetch one inbox file, delete it from the repo, return parsed JSON."""
+    """Fetch one inbox file, delete it from the repo, return parsed JSON or None if empty."""
     url  = f"{API}/{path}"
     data = _get(url)
-    raw  = base64.b64decode(data["content"].replace("\n", "")).decode("utf-8")
+    raw  = base64.b64decode(data["content"].replace("\n", "")).decode("utf-8").strip()
     _delete(url, data["sha"], f"Process: {path}")
     print(f"Fetched + deleted: {path}")
+    if not raw:
+        print(f"  Warning: {path} was empty — skipping")
+        return None
     return json.loads(raw)
 
 
@@ -63,6 +66,11 @@ def single_mode():
     if not path:
         raise SystemExit("INBOX_FILE env var is empty — no inbox file to read")
     payload = fetch_and_delete(path)
+    if payload is None:
+        print("Empty inbox file — nothing to process")
+        with open("/tmp/payload.json", "w") as f:
+            json.dump({}, f)
+        return
     with open("/tmp/payload.json", "w") as f:
         json.dump(payload, f)
     print(f"Wrote /tmp/payload.json")
@@ -93,6 +101,8 @@ def all_mode():
 
     for f in json_files:
         content = fetch_and_delete(f["path"])
+        if content is None:
+            continue
         if "conversation" in content:
             conversations.append(content["conversation"])
         elif "conversations" in content:
