@@ -356,4 +356,60 @@ function debounce(fn, ms) {
   return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
 }
 
+// ── DAILY_SWEEP — called by background.js at 18:00 ───────────────────────────
+// Fetches all conversations updated today fresh from the API (not from the
+// page-load cache), so notes added after the page was opened are included.
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type !== 'DAILY_SWEEP') return;
+  fetchTodaysConversations()
+    .then(conversations => sendResponse({ ok: true, conversations }))
+    .catch(err => sendResponse({ ok: false, error: err.message }));
+  return true; // async
+});
+
+async function fetchTodaysConversations() {
+  // Get bearer token
+  let token = '';
+  try {
+    const s = await fetch('/api/auth/session', { credentials: 'include' });
+    if (s.ok) { const d = await s.json(); token = d?.accessToken || ''; }
+  } catch {}
+
+  const authHeaders = {
+    Accept: 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+
+  // Midnight of today in Unix seconds
+  const todayMidnight = new Date();
+  todayMidnight.setHours(0, 0, 0, 0);
+  const midnightTs = todayMidnight.getTime() / 1000;
+
+  // Fetch the conversation list (most-recently-updated first)
+  const listResp = await fetch(
+    '/backend-api/conversations?order=updated&limit=100',
+    { credentials: 'include', headers: authHeaders }
+  );
+  if (!listResp.ok) throw new Error(`Conversation list HTTP ${listResp.status}`);
+  const listData = await listResp.json();
+  const items = listData?.items || [];
+
+  // Keep only conversations that were updated today
+  const todayItems = items.filter(item => {
+    const ts = item.update_time || item.create_time || 0;
+    return ts >= midnightTs;
+  });
+
+  if (!todayItems.length) return [];
+
+  // Re-fetch each conversation fresh so we get the full message tree
+  const conversations = await Promise.all(
+    todayItems.map(async (item) => {
+      try { return await fetchFullConversation(item.id); } catch { return null; }
+    })
+  );
+
+  return conversations.filter(Boolean);
+}
+
 waitForUI();

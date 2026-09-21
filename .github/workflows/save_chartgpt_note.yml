@@ -53,7 +53,8 @@ jobs:
           while IFS='|' read -r local_path onedrive_dir || [ -n "$local_path" ]; do
             [ -z "$local_path" ] && continue
             filename=$(basename "$local_path")
-            echo "Uploading: $local_path → onedrive915:$onedrive_dir/"
-            rclone -v --config /tmp/rclone.conf copy "$local_path" "onedrive915:$onedrive_dir"
+            dest="onedrive915:$onedrive_dir/$filename"
+            echo "Uploading: $local_path → $dest"
+            rclone -v --config /tmp/rclone.conf copyto "$local_path" "$dest"
             echo "Saved: $onedrive_dir/$filename"
           done < /tmp/uploads.txt

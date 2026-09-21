@@ -4,13 +4,14 @@ const GITHUB_REPO         = "yogeshs-lenity/ChartGPT-notes";
 const GITHUB_DISPATCH_URL = `https://api.github.com/repos/${GITHUB_REPO}/dispatches`;
 const GITHUB_CONTENTS_URL = `https://api.github.com/repos/${GITHUB_REPO}/contents`;
 
-const SAVE_HOUR   = 6;  // 6:30 AM IST = 6 PM PDT
-const SAVE_MINUTE = 30;
+const SAVE_HOUR   = 18; // 6:00 PM local time (Oxnard = Pacific)
+const SAVE_MINUTE = 0;
 
-// ── Schedule daily 6:30 AM alarm ──────────────────────────────────────────────
+// ── Schedule daily alarm ───────────────────────────────────────────────────────
+// Always clears and recreates so that changes to SAVE_HOUR/SAVE_MINUTE take
+// effect immediately on the next extension load — no reinstall needed.
 function scheduleDailyAlarm() {
-  chrome.alarms.get("daily-save", (existing) => {
-    if (existing) return;
+  chrome.alarms.clear("daily-save", () => {
     const now  = new Date();
     const fire = new Date();
     fire.setHours(SAVE_HOUR, SAVE_MINUTE, 0, 0);
@@ -20,61 +21,37 @@ function scheduleDailyAlarm() {
 }
 
 chrome.runtime.onInstalled.addListener(scheduleDailyAlarm);
-chrome.runtime.onStartup.addListener(scheduleDailyAlarm);
+
+// On startup: reschedule AND catch up if Chrome was closed at save time.
+chrome.runtime.onStartup.addListener(() => {
+  scheduleDailyAlarm();
+  catchUpIfMissed();
+});
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === "daily-save") dailySave();
 });
 
+// ── Catch-up: run if Chrome was closed during the scheduled save window ───────
+async function catchUpIfMissed() {
+  const { last_save_date } = await chrome.storage.local.get("last_save_date");
+  const today = new Date().toDateString();
+  const now   = new Date();
+  if (last_save_date !== today && now.getHours() >= SAVE_HOUR) {
+    await dailySave();
+  }
+}
+
 // Per-tab raw conversation JSON (cleared when tab closes)
 const tabConversations = new Map();
 chrome.tabs.onRemoved.addListener(id => tabConversations.delete(id));
 
-// ── Daily 6:30 AM save ────────────────────────────────────────────────────────
-// Dispatches every conversation captured since the last save, then flushes
-// any individually queued notes. Conversations are stored in daily_conv_cache
-// as they arrive so they survive tab closure before the alarm fires.
-async function dailySave() {
-  const { github_pat, daily_conv_cache = {} } =
-    await chrome.storage.local.get(["github_pat", "daily_conv_cache"]);
-
-  // Merge still-open tabs in case their SCAN_DONE fires late
-  for (const [tabId, convData] of tabConversations) {
-    const id = convData?.conversation_id || String(tabId);
-    daily_conv_cache[id] = convData;
-  }
-
-  // Skip the _date sentinel key when counting/iterating conversations
-  const convIds = Object.keys(daily_conv_cache).filter(k => k !== "_date");
-  if (convIds.length) {
-    notify("ChartGPT Notes — daily save", `Processing ${convIds.length} conversation(s)…`);
-    for (const id of convIds) {
-      try {
-        await dispatchConversation(daily_conv_cache[id], github_pat);
-      } catch (e) {
-        notify("ChartGPT Notes — dispatch error", e.message);
-      }
-    }
-    // Reset cache but keep today's date stamp so stale entries don't re-accumulate
-    await chrome.storage.local.set({ daily_conv_cache: { _date: new Date().toDateString() } });
-    // Full conversations already contain everything — clear the legacy queue so it
-    // doesn't create a second duplicate run for the same session
-    await chrome.storage.local.set({ note_queue: [] });
-  } else {
-    // No full conversations captured — fall back to legacy individually-queued notes
-    await flushQueue();
-  }
-}
-
 // ── Message handler ───────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "RAW_CONV") {
-    // Store in memory keyed by tab — used by importConversation()
     if (sender.tab?.id) tabConversations.set(sender.tab.id, msg.data);
-    // Persist to daily cache so it survives if the tab closes before 6:30 AM.
-    // Reset the cache when the date changes so old conversations don't bleed into
-    // the next day's dispatch.
-    const convId  = msg.data?.conversation_id || String(sender.tab?.id || Date.now());
+    // Keep daily_conv_cache as a fallback (e.g. for resend)
+    const convId   = msg.data?.conversation_id || String(sender.tab?.id || Date.now());
     const todayStr = new Date().toDateString();
     chrome.storage.local.get("daily_conv_cache", ({ daily_conv_cache = {} }) => {
       if (daily_conv_cache._date !== todayStr) daily_conv_cache = { _date: todayStr };
@@ -90,21 +67,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
   if (msg.type === "FLUSH_NOW") {
-    dailySave();  // dispatches captured conversations + legacy queue
-    sendResponse({ ok: true });
-    return;
+    dailySave().then(() => sendResponse({ ok: true }));
+    return true; // async
   }
   if (msg.type === "REMOVE_NOTE") {
     removeNote(msg.key).then(() => sendResponse({ ok: true }));
-    return true; // async
+    return true;
   }
   if (msg.type === "RESEND_LAST") {
     resendLast().then(() => sendResponse({ ok: true }));
-    return true; // async
+    return true;
   }
   if (msg.type === "IMPORT_URL") {
     importConversation(msg.url).then(() => sendResponse({ ok: true }));
-    return true; // async
+    return true;
   }
   if (msg.type === "GET_STATE") {
     chrome.storage.local.get(
@@ -120,14 +96,98 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         });
       }
     );
-    return true; // async
+    return true;
   }
 });
 
+// ── Daily save — re-fetches all conversations updated today ───────────────────
+// Does a fresh API sweep so notes dictated after page load are included.
+// Falls back to legacy queue if the sweep fails.
+async function dailySave() {
+  const { github_pat } = await chrome.storage.local.get("github_pat");
+  if (!github_pat) {
+    notify("ChartGPT Notes", "Open the extension and enter your GitHub PAT.");
+    return;
+  }
+
+  notify("ChartGPT Notes — saving", "Collecting today's conversations…");
+
+  let conversations = [];
+  try {
+    conversations = await sweepTodaysConversations();
+  } catch (e) {
+    notify("ChartGPT Notes — sweep error", e.message + " — falling back to queue");
+    await flushQueue();
+    return;
+  }
+
+  if (!conversations.length) {
+    notify("ChartGPT Notes", "No conversations found for today.");
+    await chrome.storage.local.set({ last_save_date: new Date().toDateString() });
+    return;
+  }
+
+  try {
+    const inboxPath = await uploadToInbox({ conversations }, github_pat);
+    const resp = await fetch(GITHUB_DISPATCH_URL, {
+      method:  "POST",
+      headers: {
+        "Accept":        "application/vnd.github+json",
+        "Authorization": `Bearer ${github_pat}`,
+        "Content-Type":  "application/json",
+      },
+      body: JSON.stringify({
+        event_type:     "save_chartgpt_note",
+        client_payload: { inbox_file: inboxPath },
+      }),
+    });
+    if (resp.status === 204) {
+      await chrome.storage.local.set({ last_save_date: new Date().toDateString() });
+      notify(`✓ ${conversations.length} conversation(s) dispatched`, "PDF generating on GitHub Actions");
+    } else {
+      notify("ChartGPT Notes — dispatch error", `HTTP ${resp.status}`);
+    }
+  } catch (e) {
+    notify("ChartGPT Notes — error", e.message);
+  }
+}
+
+// ── Find or open a ChatGPT tab and ask content.js to fetch today's convs ──────
+async function sweepTodaysConversations() {
+  const tabs = await chrome.tabs.query({ url: "*://chatgpt.com/*" });
+  let tabId;
+  let opened = false;
+
+  if (tabs.length > 0) {
+    tabId = tabs[0].id;
+  } else {
+    const tab = await chrome.tabs.create({ url: "https://chatgpt.com/", active: false });
+    tabId = tab.id;
+    opened = true;
+    await tabFullyLoaded(tabId);
+    await sleep(1500); // give content script time to initialise
+  }
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      if (opened) chrome.tabs.remove(tabId).catch(() => {});
+      reject(new Error("Daily sweep timed out after 60s"));
+    }, 60000);
+
+    chrome.tabs.sendMessage(tabId, { type: "DAILY_SWEEP" }, (response) => {
+      clearTimeout(timer);
+      if (opened) chrome.tabs.remove(tabId).catch(() => {});
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      if (response?.ok) resolve(response.conversations || []);
+      else reject(new Error(response?.error || "Sweep returned no data"));
+    });
+  });
+}
+
 // ── Import a conversation by URL ──────────────────────────────────────────────
-// Opens the URL in a visible tab. The content script's initial scan fires
-// automatically, queuing all detected completed notes. The tab is closed after
-// SCAN_DONE is received from the content script (or after a 15-second timeout).
 async function importConversation(url) {
   return new Promise(async (resolve) => {
     const tab = await chrome.tabs.create({ url, active: true });
@@ -146,8 +206,6 @@ async function importConversation(url) {
 
     const scanListener = async (msg, sender) => {
       if (msg.type !== "SCAN_DONE" || sender.tab?.id !== tab.id) return;
-
-      // Prefer raw conversation JSON → chartgpt_notes.py does all detection
       const rawConv = tabConversations.get(tab.id);
       if (rawConv) {
         const { github_pat } = await chrome.storage.local.get("github_pat");
@@ -155,8 +213,6 @@ async function importConversation(url) {
         finish();
         return;
       }
-
-      // Fallback: flush whatever individual notes the content script queued
       await flushQueue();
       finish();
     };
@@ -164,55 +220,42 @@ async function importConversation(url) {
   });
 }
 
-// ── Queue a note (with deduplication) ────────────────────────────────────────
+// ── Queue a note (legacy individual-note path) ────────────────────────────────
 async function queueNote(payload) {
   const { note_queue = [] } = await chrome.storage.local.get("note_queue");
-
   const key = payload.note_content.slice(-80);
   if (note_queue.some(n => n.note_content.slice(-80) === key)) return;
-
   note_queue.push(payload);
   await chrome.storage.local.set({ note_queue });
-
   notify(
     `Queued — ${payload.workflow_type}`,
     `${payload.patient_initials} · ${payload.date_of_service}  (${note_queue.length} note${note_queue.length > 1 ? "s" : ""} queued)`
   );
 }
 
-// ── Remove a single note from the queue by its dedup key ─────────────────────
 async function removeNote(key) {
   const { note_queue = [] } = await chrome.storage.local.get("note_queue");
-  const filtered = note_queue.filter(n => n.note_content.slice(-80) !== key);
-  await chrome.storage.local.set({ note_queue: filtered });
+  await chrome.storage.local.set({ note_queue: note_queue.filter(n => n.note_content.slice(-80) !== key) });
 }
 
-// ── Flush current queue to GitHub Actions ─────────────────────────────────────
 async function flushQueue() {
   const { note_queue = [], github_pat } = await chrome.storage.local.get(["note_queue", "github_pat"]);
   if (!note_queue.length) return;
-  await dispatch(note_queue, github_pat, /* clearQueueOnSuccess */ true);
+  await dispatch(note_queue, github_pat, true);
 }
 
-// ── Resend the notes from the last batch ─────────────────────────────────────
-// Useful when GitHub dispatch succeeded (HTTP 204) but the Actions job itself
-// failed — queue was already cleared, but batch is preserved here.
 async function resendLast() {
   const { last_sent_batch, github_pat } = await chrome.storage.local.get(["last_sent_batch", "github_pat"]);
   if (!last_sent_batch?.notes?.length) return;
-  await dispatch(last_sent_batch.notes, github_pat, /* clearQueueOnSuccess */ false);
+  await dispatch(last_sent_batch.notes, github_pat, false);
 }
 
-// ── Upload payload to repo inbox (bypasses GitHub's 25KB dispatch limit) ─────
-// Writes JSON to inbox/notes_<ts>.json via Contents API, returns the path.
-// The workflow reads and deletes the file. PAT needs repo (classic) or
-// Contents:write (fine-grained) scope.
+// ── Upload payload to repo inbox ──────────────────────────────────────────────
 async function uploadToInbox(payload, pat) {
-  const path = `inbox/notes_${Date.now()}.json`;
-  const json = JSON.stringify(payload);
-  // btoa requires latin1; encode UTF-8 bytes correctly
+  const path  = `inbox/notes_${Date.now()}.json`;
+  const json  = JSON.stringify(payload);
   const bytes = new TextEncoder().encode(json);
-  const binStr = Array.from(bytes, b => String.fromCharCode(b)).join('');
+  const binStr = Array.from(bytes, b => String.fromCharCode(b)).join("");
   const base64 = btoa(binStr);
 
   const resp = await fetch(`${GITHUB_CONTENTS_URL}/${path}`, {
@@ -230,27 +273,19 @@ async function uploadToInbox(payload, pat) {
 
   if (!resp.ok) {
     const body = await resp.text();
-    let msg = '';
+    let msg = "";
     try { msg = JSON.parse(body)?.message; } catch {}
     throw new Error(`Inbox upload HTTP ${resp.status}: ${msg || body.slice(0, 120)}`);
   }
   return path;
 }
 
-// ── Dispatch raw conversation JSON (new path — chartgpt_notes.py detects) ────
+// ── Dispatch a single raw conversation object (used by importConversation) ────
 async function dispatchConversation(convData, github_pat) {
   if (!github_pat) {
     notify("ChartGPT Notes", "Open the extension and enter your GitHub PAT.");
     return;
   }
-  const batch = {
-    notes:     [],
-    count:     0,
-    sent_at:   new Date().toISOString(),
-    status:    "sending",
-    summaries: ["Full conversation — chartgpt_notes.py will detect notes"],
-  };
-  await chrome.storage.local.set({ last_sent_batch: batch });
   try {
     const inboxPath = await uploadToInbox({ conversation: convData }, github_pat);
     const resp = await fetch(GITHUB_DISPATCH_URL, {
@@ -266,29 +301,21 @@ async function dispatchConversation(convData, github_pat) {
       }),
     });
     if (resp.status === 204) {
-      await chrome.storage.local.set({ last_sent_batch: { ...batch, status: "sent", count: 1 } });
       notify("✓ Conversation dispatched — PDF generating", "chartgpt_notes.py will extract all notes");
     } else {
-      const body2 = await resp.text();
-      let detail2 = '';
-      try { detail2 = JSON.parse(body2)?.message || body2.slice(0, 120); } catch { detail2 = body2.slice(0, 120); }
-      await chrome.storage.local.set({ last_sent_batch: { ...batch, status: "error", error: `HTTP ${resp.status}: ${detail2}` } });
-      notify(`ChartGPT Notes — HTTP ${resp.status}`, detail2 || "Open popup to retry.");
+      notify(`ChartGPT Notes — HTTP ${resp.status}`, "Import dispatch failed");
     }
   } catch (err) {
-    await chrome.storage.local.set({ last_sent_batch: { ...batch, status: "error", error: err.message } });
-    notify("ChartGPT Notes — upload/dispatch error", err.message);
+    notify("ChartGPT Notes — error", err.message);
   }
 }
 
-// ── Core dispatch ─────────────────────────────────────────────────────────────
+// ── Core legacy dispatch (notes array) ───────────────────────────────────────
 async function dispatch(notes, github_pat, clearQueueOnSuccess) {
   if (!github_pat) {
     notify("ChartGPT Notes", "Open the extension and enter your GitHub PAT.");
     return;
   }
-
-  // Persist batch BEFORE network call so no data is lost if the call hangs or fails
   const batch = {
     notes,
     count:     notes.length,
@@ -299,10 +326,7 @@ async function dispatch(notes, github_pat, clearQueueOnSuccess) {
   await chrome.storage.local.set({ last_sent_batch: batch });
 
   try {
-    // Upload full notes array (with note_content) to repo inbox — GitHub's
-    // 25KB client_payload limit would reject clinical note content directly.
     const inboxPath = await uploadToInbox({ notes }, github_pat);
-
     const resp = await fetch(GITHUB_DISPATCH_URL, {
       method: "POST",
       headers: {
@@ -317,39 +341,37 @@ async function dispatch(notes, github_pat, clearQueueOnSuccess) {
     });
 
     if (resp.status === 204) {
-      // GitHub received the dispatch. Clear queue only if this was the live queue
-      // (not a resend of an old batch).
-      if (clearQueueOnSuccess) {
-        await chrome.storage.local.set({ note_queue: [] });
-      }
+      if (clearQueueOnSuccess) await chrome.storage.local.set({ note_queue: [] });
       await chrome.storage.local.set({ last_sent_batch: { ...batch, status: "sent" } });
-      notify(
-        `✓ ${batch.count} note${batch.count > 1 ? "s" : ""} dispatched to OneDrive`,
-        batch.summaries.join("\n")
-      );
+      notify(`✓ ${batch.count} note${batch.count > 1 ? "s" : ""} dispatched`, batch.summaries.join("\n"));
     } else {
       const body = await resp.text();
-      let detail = '';
+      let detail = "";
       try { detail = JSON.parse(body)?.message || body.slice(0, 120); } catch { detail = body.slice(0, 120); }
-      await chrome.storage.local.set({
-        last_sent_batch: { ...batch, status: "error", error: `HTTP ${resp.status}: ${detail}` },
-      });
-      notify(
-        `ChartGPT Notes — HTTP ${resp.status}`,
-        detail || "Open popup to retry."
-      );
+      await chrome.storage.local.set({ last_sent_batch: { ...batch, status: "error", error: `HTTP ${resp.status}: ${detail}` } });
+      notify(`ChartGPT Notes — HTTP ${resp.status}`, detail || "Open popup to retry.");
     }
   } catch (err) {
-    // Network error — queue also NOT cleared
-    await chrome.storage.local.set({
-      last_sent_batch: { ...batch, status: "error", error: err.message },
-    });
-    notify(
-      "ChartGPT Notes — network error",
-      `${err.message} — notes preserved. Open popup to retry.`
-    );
+    await chrome.storage.local.set({ last_sent_batch: { ...batch, status: "error", error: err.message } });
+    notify("ChartGPT Notes — network error", `${err.message} — notes preserved.`);
   }
 }
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+function tabFullyLoaded(tabId) {
+  return new Promise((resolve) => {
+    const listener = (id, info) => {
+      if (id === tabId && info.status === "complete") {
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+    setTimeout(resolve, 10000); // fallback
+  });
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 function notify(title, message) {
   chrome.notifications.create({

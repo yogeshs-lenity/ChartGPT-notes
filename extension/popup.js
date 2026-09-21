@@ -105,7 +105,7 @@ function render() {
 function renderAutoSave() {
   const now  = new Date();
   const fire = new Date();
-  fire.setHours(6, 30, 0, 0);
+  fire.setHours(18, 0, 0, 0);
   if (fire <= now) fire.setDate(fire.getDate() + 1);
 
   const diff = fire - now;
