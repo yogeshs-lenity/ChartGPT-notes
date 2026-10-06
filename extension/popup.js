@@ -25,14 +25,29 @@ const D = {
 
 let state = { queue: [], hasPat: false, lastBatch: null, convCount: 0, convTitles: [] };
 
-// Load state from background on open
-chrome.runtime.sendMessage({ type: 'GET_STATE' }, resp => {
-  if (resp) { state = resp; render(); }
-});
+// Load state — retry once after 900ms in case the service worker was
+// just waking up and missed the first message.
+function loadState(attempt = 0) {
+  chrome.runtime.sendMessage({ type: 'GET_STATE' }, resp => {
+    if (chrome.runtime.lastError) {
+      if (attempt < 2) setTimeout(() => loadState(attempt + 1), 900);
+      return;
+    }
+    if (resp) { state = resp; render(); }
+    else if (attempt < 2) setTimeout(() => loadState(attempt + 1), 900);
+  });
+}
+loadState();
 
-// Also pre-fill PAT field
+// Also pre-fill PAT field directly from storage (bypasses SW, always works)
 chrome.storage.local.get('github_pat', ({ github_pat }) => {
-  if (github_pat) D.patInput.value = github_pat;
+  if (github_pat) {
+    D.patInput.value = github_pat;
+    // Update badge immediately so it's correct even before GET_STATE returns
+    D.patBadge.textContent = 'PAT ✓';
+    D.patBadge.className = 'pat-badge ok';
+    state.hasPat = true;
+  }
 });
 
 // ── Render ────────────────────────────────────────────────────────────────────
@@ -134,19 +149,30 @@ function renderLastSent(batch) {
 // ── Event handlers ────────────────────────────────────────────────────────────
 D.importBtn.addEventListener('click', () => {
   const url = D.importUrl.value.trim();
-  if (!url.includes('chatgpt.com')) { toast('Enter a ChatGPT URL', true); return; }
+  if (!url.includes('chatgpt.com') && !url.includes('chat.openai.com')) {
+    toast('Enter a ChatGPT URL', true); return;
+  }
   D.importBtn.disabled = true;
   D.importBtn.textContent = '…';
   D.importStatus.textContent = 'Fetching full transcript — auto-closes when done';
   D.importStatus.style.display = '';
-  chrome.runtime.sendMessage({ type: 'IMPORT_URL', url }, () => {
-    D.importBtn.disabled = false;
-    D.importBtn.textContent = 'Go';
-    D.importUrl.value = '';
-    D.importStatus.style.display = 'none';
-    toast('Import complete — check queue');
-    setTimeout(refreshState, 800);
-  });
+
+  function doImport(attempt) {
+    chrome.runtime.sendMessage({ type: 'IMPORT_URL', url }, () => {
+      if (chrome.runtime.lastError && attempt < 2) {
+        // SW was starting up — retry after a short wait
+        setTimeout(() => doImport(attempt + 1), 1000);
+        return;
+      }
+      D.importBtn.disabled = false;
+      D.importBtn.textContent = 'Go';
+      D.importUrl.value = '';
+      D.importStatus.style.display = 'none';
+      toast('Import complete — check queue');
+      setTimeout(refreshState, 800);
+    });
+  }
+  doImport(0);
 });
 
 D.flushBtn.addEventListener('click', () => {

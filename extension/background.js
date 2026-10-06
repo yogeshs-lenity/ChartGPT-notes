@@ -193,9 +193,13 @@ async function importConversation(url) {
     const tab = await chrome.tabs.create({ url, active: true });
     let settled = false;
 
+    // Keep the service worker alive during the import (MV3 workers sleep after ~30s idle)
+    const keepAlive = setInterval(() => chrome.storage.local.get('_ka', () => {}), 20000);
+
     const finish = () => {
       if (settled) return;
       settled = true;
+      clearInterval(keepAlive);
       chrome.runtime.onMessage.removeListener(scanListener);
       clearTimeout(timer);
       setTimeout(() => chrome.tabs.remove(tab.id).catch(() => {}), 1200);
